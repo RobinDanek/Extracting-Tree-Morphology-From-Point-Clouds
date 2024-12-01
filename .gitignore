@@ -2,3 +2,6 @@
 data/raw/cloud/*
 data/raw/QSM/detailed/*
 data/raw/QSM/ply/*
+
+# Ignore notebook for testing
+test.ipynb
