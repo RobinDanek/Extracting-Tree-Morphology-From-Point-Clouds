@@ -4,6 +4,8 @@ data/raw/QSM/detailed/*
 data/raw/QSM/ply/*
 data/labeled/cloud/*
 
+TreeLearn/
+
 # Ignore notebook for testing
 test.ipynb
 
