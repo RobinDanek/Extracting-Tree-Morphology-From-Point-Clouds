@@ -28,12 +28,11 @@ val_loader = get_dataloader( valset, batch_size, num_workers=0, training=False )
 model = TreeLearn( dim_feat=0, use_coords=True, use_feats=False )
 
 # scheduler and optimizer
-optimizer = torch.optim.AdamW( model.parameters(), lr = 0.002, weight_decay= 0.001  )
+optimizer = torch.optim.AdamW( model.parameters(), lr = 0.002, weight_decay= 0.001 )
 scheduler = CosineLRScheduler(optimizer, t_initial=1300, lr_min=0.0001, cycle_decay=1, warmup_lr_init=0.00001, warmup_t=50, cycle_limit=1, t_in_epochs=True)
 
 # early stopper
 early_stopper = EarlyStopper( verbose=True )
-
 
 # Start training
 if __name__ == "__main__":

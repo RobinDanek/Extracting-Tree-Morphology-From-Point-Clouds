@@ -11,6 +11,7 @@ setup/setup_gwdg
 
 # Ignore slurm
 jobs/
+*.out
 
 # Ignore notebook for testing
 test.ipynb

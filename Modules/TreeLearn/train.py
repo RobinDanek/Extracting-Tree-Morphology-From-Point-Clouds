@@ -4,17 +4,17 @@ import time
 import torch
 import torch.nn.parallel
 from torch.utils.data import DataLoader
-import tqdm
+from tqdm import tqdm
 import numpy as np
 import time
 from collections import defaultdict
-from fastprogress.fastprogress import master_bar, progress_bar
+#from fastprogress.fastprogress import master_bar, progress_bar
 
 from .TreeLearn import TreeLearn, LOSS_MULTIPLIER_SEMANTIC
 from Modules.Utils import cuda_cast, EarlyStopper
 
 
-def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
+def train(model, train_loader, optimizer, scheduler, scaler, epoch):
     """
     Perform one epoch of training.
     
@@ -31,7 +31,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
     start = time.time()
     losses_dict = defaultdict(list)
 
-    for batch in progress_bar(train_loader, parent=mb):
+    for batch in tqdm(train_loader, desc="Training", leave=False):
 
         scheduler.step(epoch)
         optimizer.zero_grad()
@@ -61,7 +61,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
     return loss_total, loss_off, loss_sem
 
 
-def validate(model, val_loader, epoch, mb):
+def validate(model, val_loader, epoch):
     """
     Perform validation and compute average loss.
     
@@ -78,7 +78,7 @@ def validate(model, val_loader, epoch, mb):
     losses_dict = defaultdict(list)
 
     with torch.no_grad():
-        for batch in progress_bar(val_loader, parent=mb):
+        for batch in tqdm(val_loader, desc="Validating"):
 
             with torch.cuda.amp.autocast(enabled=True):
 
@@ -119,15 +119,14 @@ def run_training(
         early_stopper: Optional EarlyStopping instance.
     """
     scaler = torch.cuda.amp.GradScaler(enabled=True)
-    mb = master_bar(range(epochs))
 
-    for epoch in mb:
+    for epoch in tqdm(range(epochs), desc="Epochs"):
         # Training phase
-        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch, mb)
+        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch)
         print(f"Epoch {epoch + 1}/{epochs}, Training Loss: {train_loss_total:.4f}")
 
         # Validation phase
-        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch, mb)
+        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch)
         print(f"Epoch {epoch + 1}/{epochs}, Validation Loss: {val_loss_total:.4f}")
 
         # Step scheduler if provided
