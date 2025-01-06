@@ -4,7 +4,13 @@ data/raw/QSM/detailed/*
 data/raw/QSM/ply/*
 data/labeled/cloud/*
 
-TreeLearn/
+./TreeLearn/
+
+# Ignore setup_gwdg
+setup/setup_gwdg
+
+# Ignore slurm
+jobs/
 
 # Ignore notebook for testing
 test.ipynb

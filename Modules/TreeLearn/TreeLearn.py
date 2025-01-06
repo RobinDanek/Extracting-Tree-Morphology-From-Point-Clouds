@@ -99,7 +99,7 @@ class TreeLearn(nn.Module):
             spatial_shape = torch.tensor(self.spatial_shape, device=voxel_coords.device)
         print("Generating input")
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-
+        print(f"input tensor: {input}")
         print("Generating output: Input conv")
         output = self.input_conv(input)
         print("Generating output: UNet")
@@ -201,10 +201,9 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
         # Apply feature selection
         if not use_coords:
             voxel_feat[:, :3] = torch.ones_like(voxel_feat[:, :3])
-        if not use_feats and coords.shape[1] > 3:
+        if not use_feats:
             voxel_feat[:, 3:] = torch.ones_like(voxel_feat[:, 3:])
-        if coords.shape[1] > 3:
-            voxel_feat = torch.hstack([voxel_feat[:, 3:], voxel_feat[:, :3]])
+        voxel_feat = torch.hstack([voxel_feat[:, 3:], voxel_feat[:, :3]])
 
         # Collect results
         voxel_coords.append(voxel_coord)
@@ -212,9 +211,12 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
         v2p_maps.append(v2p_map + total_len_voxels)
         total_len_voxels += len(voxel_coord)
 
+        print(f"batch {i} coord first column: {voxel_coord[0]}\n\tfirst feat column: {voxel_feat[0]}")
+
     # Concatenate results
     voxel_coords = torch.cat(voxel_coords, dim=0)
     voxel_feats = torch.cat(voxel_feats, dim=0)
+    print(f"Voxel feats size: {voxel_feats.shape}")
     v2p_maps = torch.cat(v2p_maps, dim=0)
     spatial_shape = voxel_coords.max(dim=0).values + 1
 
