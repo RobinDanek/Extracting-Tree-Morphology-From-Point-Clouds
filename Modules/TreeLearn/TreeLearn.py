@@ -94,13 +94,17 @@ class TreeLearn(nn.Module):
     @cuda_cast
     def forward_backbone(self, coords, batch_ids, batch_size, **kwargs):
         voxel_feats, voxel_coords, v2p_map, spatial_shape = voxelize(coords, batch_ids, batch_size, self.voxel_size, self.use_coords, self.use_feats, max_num_points_per_voxel=self.max_num_points_per_voxel)
+        print(f"######### SPATIAL SHAPE: {spatial_shape} ###############")
         if self.spatial_shape is not None:
             spatial_shape = torch.tensor(self.spatial_shape, device=voxel_coords.device)
+        print("Generating input")
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
 
+        print("Generating output: Input conv")
         output = self.input_conv(input)
-
+        print("Generating output: UNet")
         output = self.unet(output)
+        print("Generating output: output layer")
         output = self.output_layer(output)
         return output, v2p_map
     
@@ -174,6 +178,13 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
 
         # Generate voxel data
         voxel_feat, voxel_coord, _, v2p_map = voxelizer.generate_voxel_with_id(feats_one_element)
+        if voxel_coord.size(0) == 0:
+            print("SKIPPED EMPTY BATCH")
+            continue  # Skip this batch if no valid voxels were generated
+        print(f"Batch {i}: v2p_map size={v2p_map.size()}")
+        assert torch.sum(v2p_map == -1) == 0, f"Invalid entries in v2p_map for batch {i}"
+
+
 
         # Ensure no invalid mappings
         assert torch.sum(v2p_map == -1) == 0

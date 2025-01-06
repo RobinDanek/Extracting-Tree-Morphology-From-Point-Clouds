@@ -6,7 +6,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 class TreeSet(Dataset):
-    def __init__(self, data_root, inner_square_edge_length, training, logger, data_augmentations=None, noise_distance=0.5):
+    def __init__(self, data_root, training, logger=None, data_augmentations=None, noise_distance=0.05):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -18,15 +18,15 @@ class TreeSet(Dataset):
             data_augmentations (callable, optional): Data augmentation function or pipeline.
             noise_distance (float): Threshold for determining offset mask and semantic labels.
         """
-        self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.pt')]
-        self.inner_square_edge_length = inner_square_edge_length
-        self.logger = logger
+        self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.npy')]
         self.training = training
         self.data_augmentations = data_augmentations
         self.noise_distance = noise_distance
 
-        mode = 'train' if training else 'test'
-        self.logger.info(f"Initialized {mode} dataset with {len(self.data_paths)} scans.")
+        if logger:
+            self.logger = logger
+            mode = 'train' if training else 'test'
+            self.logger.info(f"Initialized {mode} dataset with {len(self.data_paths)} scans.")
 
     def __len__(self):
         return len(self.data_paths)
@@ -46,8 +46,8 @@ class TreeSet(Dataset):
         """
         # Load data from file
         data_path = self.data_paths[idx]
-        data = torch.load(data_path)  # Assume data is saved as a tensor
-        points, offsets = data[:, :3], data[:, 3:6]
+        data = np.load(data_path)  # Assume data is saved as a tensor
+        points, offsets = torch.from_numpy(data[:, :3]), torch.from_numpy(data[:, 3:6])
 
         # Calculate semantic labels and masks
         offset_norms = offsets.norm(dim=1)
@@ -60,7 +60,7 @@ class TreeSet(Dataset):
 
         return points, offsets, semantic_label, offset_mask
     
-    def collate_fn(batch):
+    def collate_fn(self, batch):
         """
         Custom collate function to prepare batches for the model.
 
@@ -162,7 +162,7 @@ class TreeSet(Dataset):
 #             'masks_off': self.offset_mask[idx]
 #         }
 
-def get_dataloader(dataset, batch_size, num_workers, is_training):
+def get_dataloader(dataset, batch_size, num_workers, training):
     """
     Create a DataLoader for the given dataset.
 
@@ -178,7 +178,8 @@ def get_dataloader(dataset, batch_size, num_workers, is_training):
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=is_training,  # Shuffle data if it's a training set
+        shuffle=training,  # Shuffle data if it's a training set
         num_workers=num_workers,
-        pin_memory=True  # Optimize memory transfer between CPU and GPU
+        pin_memory=True,  # Optimize memory transfer between CPU and GPU
+        collate_fn=dataset.collate_fn
     )
