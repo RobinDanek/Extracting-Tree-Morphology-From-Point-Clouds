@@ -82,7 +82,7 @@ def validate(model, val_loader, epoch, mb):
     pb.comment = f"Validation"
 
     with torch.no_grad():
-        for batch in tqdm(val_loader, desc="Validating"):
+        for batch in pb:
 
             with torch.amp.autocast('cuda', enabled=True):
 

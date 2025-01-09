@@ -15,3 +15,4 @@ open3d
 # laspy[lazrs]==2.5.1
 timm
 jupyter
+fastprogress
