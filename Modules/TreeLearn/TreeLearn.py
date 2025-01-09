@@ -11,7 +11,8 @@ from Modules.Utils import cuda_cast
 from .blocks import MLP, ResidualBlock, UBlock
 from Modules.Loss import point_wise_loss
 
-LOSS_MULTIPLIER_SEMANTIC = 50 # multiply semantic loss for similar magnitude with offset loss
+# LOSS_MULTIPLIER_SEMANTIC = 50 # multiply semantic loss for similar magnitude with offset loss
+LOSS_MULTIPLIER_SEMANTIC = 0
 N_POINTS = None # only calculate loss for specified number of randomly sampled points; use all points if set to None
 
 ####################### TREELEARN #############################
@@ -94,17 +95,17 @@ class TreeLearn(nn.Module):
     @cuda_cast
     def forward_backbone(self, coords, batch_ids, batch_size, **kwargs):
         voxel_feats, voxel_coords, v2p_map, spatial_shape = voxelize(coords, batch_ids, batch_size, self.voxel_size, self.use_coords, self.use_feats, max_num_points_per_voxel=self.max_num_points_per_voxel)
-        print(f"######### SPATIAL SHAPE: {spatial_shape} ###############")
+        #print(f"######### SPATIAL SHAPE: {spatial_shape} ###############")
         if self.spatial_shape is not None:
             spatial_shape = torch.tensor(self.spatial_shape, device=voxel_coords.device)
-        print("Generating input")
+        #print("Generating input")
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-        print(f"input tensor: {input}")
-        print("Generating output: Input conv")
+        #print(f"input tensor: {input}")
+        #print("Generating output: Input conv")
         output = self.input_conv(input)
-        print("Generating output: UNet")
+        #print("Generating output: UNet")
         output = self.unet(output)
-        print("Generating output: output layer")
+        #print("Generating output: output layer")
         output = self.output_layer(output)
         return output, v2p_map
     
@@ -179,9 +180,9 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
         # Generate voxel data
         voxel_feat, voxel_coord, _, v2p_map = voxelizer.generate_voxel_with_id(feats_one_element)
         if voxel_coord.size(0) == 0:
-            print("SKIPPED EMPTY BATCH")
+            #print("SKIPPED EMPTY BATCH")
             continue  # Skip this batch if no valid voxels were generated
-        print(f"Batch {i}: v2p_map size={v2p_map.size()}")
+        #print(f"Batch {i}: v2p_map size={v2p_map.size()}")
         assert torch.sum(v2p_map == -1) == 0, f"Invalid entries in v2p_map for batch {i}"
 
 
@@ -211,14 +212,20 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
         v2p_maps.append(v2p_map + total_len_voxels)
         total_len_voxels += len(voxel_coord)
 
-        print(f"batch {i} coord first column: {voxel_coord[0]}\n\tfirst feat column: {voxel_feat[0]}")
+        if torch.isnan(voxel_feat).any():
+            print("Warning: NaNs detected in voxel_feats!")
+        if torch.isnan(voxel_coord).any():
+            print("Warning: NaNs detected in voxel_feats!")
+
+        #print(f"batch {i} coord first column: {voxel_coord[0]}\n\tfirst feat column: {voxel_feat[0]}")
 
     # Concatenate results
     voxel_coords = torch.cat(voxel_coords, dim=0)
     voxel_feats = torch.cat(voxel_feats, dim=0)
-    print(f"Voxel feats size: {voxel_feats.shape}")
+    #print(f"Voxel feats size: {voxel_feats.shape}")
     v2p_maps = torch.cat(v2p_maps, dim=0)
     spatial_shape = voxel_coords.max(dim=0).values + 1
+    #print(voxel_coords.max(dim=0))
 
     return voxel_feats, voxel_coords, v2p_maps, spatial_shape[1:]
 

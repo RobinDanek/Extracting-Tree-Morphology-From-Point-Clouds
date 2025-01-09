@@ -104,7 +104,7 @@ class TreeSet(Dataset):
             'batch_ids': batch_ids,
             'semantic_labels': semantic_labels,
             'offset_labels': offset_labels,
-            'offset_masks': offset_masks,
+            'masks_off': offset_masks,
             'batch_size': batch_id
         }
 

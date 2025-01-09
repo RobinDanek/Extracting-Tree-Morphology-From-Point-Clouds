@@ -3,11 +3,12 @@ data/raw/cloud/*
 data/raw/QSM/detailed/*
 data/raw/QSM/ply/*
 data/labeled/cloud/*
-
-./TreeLearn/
+*.html
+TreeLearn/
+!Modules/TreeLearn
 
 # Ignore setup_gwdg
-setup/setup_gwdg
+setup/setup_gwdg.sh
 
 # Ignore slurm
 jobs/

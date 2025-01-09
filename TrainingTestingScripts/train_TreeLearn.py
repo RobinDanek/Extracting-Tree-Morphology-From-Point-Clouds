@@ -10,10 +10,12 @@ from timm.scheduler.cosine_lr import CosineLRScheduler
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 ###### Define parameters #######
 
-batch_size = 2
-epochs = 10
+batch_size = 5
+epochs = 100
 
 # trainloader
 train_root = os.path.join( 'data', 'labeled', 'trainset' )
@@ -25,10 +27,10 @@ valset = TreeSet( data_root=val_root, training=False )
 val_loader = get_dataloader( valset, batch_size, num_workers=0, training=False )
 
 # model
-model = TreeLearn( dim_feat=0, use_coords=True, use_feats=False )
+model = TreeLearn( dim_feat=0, use_coords=True, use_feats=False, num_blocks=5, voxel_size=0.02 ).cuda()
 
 # scheduler and optimizer
-optimizer = torch.optim.AdamW( model.parameters(), lr = 0.002, weight_decay= 0.001 )
+optimizer = torch.optim.AdamW( model.parameters(), lr = 0.005, weight_decay= 0.001 )
 scheduler = CosineLRScheduler(optimizer, t_initial=1300, lr_min=0.0001, cycle_decay=1, warmup_lr_init=0.00001, warmup_t=50, cycle_limit=1, t_in_epochs=True)
 
 # early stopper

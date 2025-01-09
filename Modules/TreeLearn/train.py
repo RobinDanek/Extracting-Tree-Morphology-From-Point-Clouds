@@ -8,13 +8,13 @@ from tqdm import tqdm
 import numpy as np
 import time
 from collections import defaultdict
-#from fastprogress.fastprogress import master_bar, progress_bar
+from fastprogress.fastprogress import master_bar, progress_bar
 
 from .TreeLearn import TreeLearn, LOSS_MULTIPLIER_SEMANTIC
 from Modules.Utils import cuda_cast, EarlyStopper
 
 
-def train(model, train_loader, optimizer, scheduler, scaler, epoch):
+def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
     """
     Perform one epoch of training.
     
@@ -31,11 +31,14 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch):
     start = time.time()
     losses_dict = defaultdict(list)
 
-    for batch in tqdm(train_loader, desc="Training", leave=False):
+    pb = progress_bar(train_loader, parent=mb)  # Progress bar for training
+    pb.comment = f"Training"  # Comment for the progress bar
+
+    for batch in pb:
 
         scheduler.step(epoch)
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=True):
+        with torch.amp.autocast('cuda', enabled=True):
 
             # forward
             loss, loss_dict = model(batch, return_loss=True)
@@ -49,10 +52,8 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch):
         scaler.step(optimizer)
         scaler.update()
 
-        mb.child.comment = f'Training'
-
-    loss_off = np.mean(loss_dict['offset_loss'])
-    loss_sem = np.mean(loss_dict['semantic_loss'])
+    loss_off = np.mean(losses_dict['offset_loss'])
+    loss_sem = np.mean(losses_dict['semantic_loss'])
     loss_total = loss_off + LOSS_MULTIPLIER_SEMANTIC * loss_sem
 
     epoch_time = time.time() - start
@@ -61,7 +62,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch):
     return loss_total, loss_off, loss_sem
 
 
-def validate(model, val_loader, epoch):
+def validate(model, val_loader, epoch, mb):
     """
     Perform validation and compute average loss.
     
@@ -77,20 +78,21 @@ def validate(model, val_loader, epoch):
     start = time.time()
     losses_dict = defaultdict(list)
 
+    pb = progress_bar(val_loader, parent=mb)  # Progress bar for validation
+    pb.comment = f"Validation"
+
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validating"):
 
-            with torch.cuda.amp.autocast(enabled=True):
+            with torch.amp.autocast('cuda', enabled=True):
 
                 # forward
                 loss, loss_dict = model(batch, return_loss=True)
                 for key, value in loss_dict.items():
                     losses_dict[key].append(value.detach().cpu().item())
 
-            mb.child.comment = f'Validating'
-
-    loss_off = np.mean(loss_dict['offset_loss'])
-    loss_sem = np.mean(loss_dict['semantic_loss'])
+    loss_off = np.mean(losses_dict['offset_loss'])
+    loss_sem = np.mean(losses_dict['semantic_loss'])
     loss_total = loss_off + LOSS_MULTIPLIER_SEMANTIC * loss_sem
 
     return loss_total, loss_off, loss_sem
@@ -118,16 +120,18 @@ def run_training(
         scheduler: Optional learning rate scheduler.
         early_stopper: Optional EarlyStopping instance.
     """
-    scaler = torch.cuda.amp.GradScaler(enabled=True)
+    scaler = torch.amp.GradScaler('cuda', enabled=True)
+    mb = master_bar(range(epochs))  # Master bar for epochs
 
-    for epoch in tqdm(range(epochs), desc="Epochs"):
+    for epoch in mb:
+        mb.main_bar.comment = f"Epoch {epoch + 1}/{epochs}"
         # Training phase
-        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch)
-        print(f"Epoch {epoch + 1}/{epochs}, Training Loss: {train_loss_total:.4f}")
+        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch, mb)
 
         # Validation phase
-        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch)
-        print(f"Epoch {epoch + 1}/{epochs}, Validation Loss: {val_loss_total:.4f}")
+        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch, mb)
+
+        mb.write(f"Epoch {epoch+1}/{epochs}, Tr Total: {train_loss_total:.4f}, Val Total: {val_loss_total:.4f}, Tr Off: {train_loss_off:.4f}, Val Off: {val_loss_off:.4f}, Tr Sem: {train_loss_sem:.4f}, Val Sem: {val_loss_sem:.4f}")
 
         # Step scheduler if provided
         # if scheduler:
@@ -135,7 +139,7 @@ def run_training(
 
         # Early stopping check
         if early_stopper:
-            early_stopper(val_loss_total)
+            early_stopper(model, val_loss_total)
             if early_stopper.early_stop:
                 print(f"Early stopping triggered at epoch {epoch + 1}")
                 break
