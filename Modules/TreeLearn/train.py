@@ -9,6 +9,8 @@ import numpy as np
 import time
 from collections import defaultdict
 from fastprogress.fastprogress import master_bar, progress_bar
+import fastprogress
+import logging
 
 from .TreeLearn import TreeLearn, LOSS_MULTIPLIER_SEMANTIC
 from Modules.Utils import cuda_cast, EarlyStopper
@@ -106,6 +108,7 @@ def run_training(
     epochs: int,
     scheduler=None,
     early_stopper=None,
+    verbose=False
 ):
     """
     Train a model with optional learning rate scheduling and early stopping.
@@ -131,7 +134,17 @@ def run_training(
         # Validation phase
         val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch, mb)
 
-        mb.write(f"Epoch {epoch+1}/{epochs}, Tr Total: {train_loss_total:.4f}, Val Total: {val_loss_total:.4f}, Tr Off: {train_loss_off:.4f}, Val Off: {val_loss_off:.4f}, Tr Sem: {train_loss_sem:.4f}, Val Sem: {val_loss_sem:.4f}")
+        # Log losses
+        log_message = (
+            f"Epoch {epoch + 1}/{epochs} | "
+            f"Train Total Loss: {train_loss_total:.4f}, Val Total Loss: {val_loss_total:.4f}, "
+            f"Train Offset Loss: {train_loss_off:.4f}, Val Offset Loss: {val_loss_off:.4f}, "
+            f"Train Semantic Loss: {train_loss_sem:.4f}, Val Semantic Loss: {val_loss_sem:.4f}"
+        )
+        logging.info(log_message)
+
+        if verbose:
+            mb.write(f"Epoch {epoch+1}/{epochs}, Tr Total: {train_loss_total:.4f}, Val Total: {val_loss_total:.4f}, Tr Off: {train_loss_off:.4f}, Val Off: {val_loss_off:.4f}, Tr Sem: {train_loss_sem:.4f}, Val Sem: {val_loss_sem:.4f}")
 
         # Step scheduler if provided
         # if scheduler:
@@ -139,7 +152,12 @@ def run_training(
 
         # Early stopping check
         if early_stopper:
-            early_stopper(model, val_loss_total)
+            early_stopper(model, train_loss_total, val_loss_total)
             if early_stopper.early_stop:
-                print(f"Early stopping triggered at epoch {epoch + 1}")
+                best_train_loss, best_val_loss = early_stopper.get_scores()
+                logging.info(f"Early stopping triggered at epoch {epoch + 1}")
+                logging.info(f"Best scores:\ttrain: {best_train_loss:.4f}, val: {best_val_loss:.4f}")
+                if verbose:
+                    print(f"Early stopping triggered at epoch {epoch + 1}")
+                    print(f"Best scores:\ttrain: {best_train_loss:.4f}, val: {best_val_loss:.4f}")
                 break

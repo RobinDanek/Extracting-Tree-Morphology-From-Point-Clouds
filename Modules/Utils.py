@@ -21,9 +21,10 @@ class EarlyStopper:
         self.model_save_path = model_save_path
         self.counter = 0
         self.best_loss = None
+        self.train_loss = None
         self.early_stop = False
 
-    def __call__(self, model, val_loss):
+    def __call__(self, model, train_loss, val_loss):
         """
         Check whether validation loss has improved and handle early stopping.
 
@@ -33,6 +34,7 @@ class EarlyStopper:
         """
         if self.best_loss is None or val_loss < self.best_loss:
             self.best_loss = val_loss
+            self.train_loss = train_loss
             self.counter = 0  # Reset counter if improvement is seen
             if self.model_save_path:
                 self.save_model(model)
@@ -45,6 +47,9 @@ class EarlyStopper:
 
     def save_model(self, model):
         torch.save(model.state_dict(), self.model_save_path)
+
+    def get_scores(self):
+        return self.train_loss, self.best_loss
 
 #################### GET DEVICE #####################
 

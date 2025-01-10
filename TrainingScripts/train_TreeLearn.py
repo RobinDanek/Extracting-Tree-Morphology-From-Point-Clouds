@@ -39,6 +39,9 @@ def log_parameters(args):
     logging.info(f"Warmup steps: {args.warmup_t}")
     logging.info(f"Minimum learning rate: {args.lr_min}")
     logging.info(f"Progress bar disabled: {args.no_progress_bar}")
+    logging.info(f"U-Net depth:  {args.blocks}")
+    logging.info(f"Noise Threshold: {args.noise_threshold}")
+    logging.info(f"Spatial Shape: {args.spatial_shape}")
     logging.info(f"Model save path: {args.model_save_path}")
 
 def parse_args():
@@ -53,7 +56,11 @@ def parse_args():
     parser.add_argument("--warmup_t", type=int, default=50, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
+    parser.add_argument("--blocks", type=int, default=5, help="The depth of the U-Net")
     parser.add_argument("--model_save_path", type=str, default=None, help="The path to which the model is saved")
+    parser.add_argument("--noise_threshold", default=0.05, type=float, help="The threshold offset label length for training")
+    parser.add_argument("--spatial_shape", type=int, nargs=3, default=[30,30,50], help="The spatial extend for voxelized clouds. Choose it large enough for the network depth.")
+    parser.add_argument("--verbose", type=bool, default=False, help="Whether to print messages during training")
 
     return parser.parse_args()
 
@@ -72,16 +79,23 @@ if __name__ == "__main__":
 
     # Train loader
     train_root = os.path.join('data', 'labeled', 'trainset')
-    trainset = TreeSet(data_root=train_root, training=True)
+    trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
     train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True)
 
     # Val loader
     val_root = os.path.join('data', 'labeled', 'testset')
-    valset = TreeSet(data_root=val_root, training=False)
+    valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
     val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
 
+    # spatial shape =  [30m,30m,50m], depends on voxel size
+    spatial_shape = [ 
+        np.round( args.spatial_shape[0]/args.voxel_size ).astype(int), 
+        np.round( args.spatial_shape[1]/args.voxel_size ).astype(int), 
+        np.round( args.spatial_shape[2]/args.voxel_size ).astype(int) 
+    ]
+
     # Model
-    model = TreeLearn(dim_feat=0, use_coords=True, use_feats=False, num_blocks=5, voxel_size=args.voxel_size).cuda()
+    model = TreeLearn(dim_feat=0, use_coords=True, use_feats=False, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
 
     # Scheduler and optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
@@ -97,7 +111,7 @@ if __name__ == "__main__":
     )
 
     # Early stopper
-    early_stopper = EarlyStopper(verbose=True, patience=args.patience_es, model_save_path=args.model_save_path)
+    early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=args.model_save_path)
 
     # Control over progress bar
     if args.no_progress_bar:
@@ -115,4 +129,5 @@ if __name__ == "__main__":
         epochs=epochs,
         scheduler=scheduler,
         early_stopper=early_stopper,
+        verbose=args.verbose
     )
