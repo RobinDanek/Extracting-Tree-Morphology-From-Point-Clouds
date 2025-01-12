@@ -1,8 +1,8 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 from fastprogress import progress_bar, master_bar
 import os 
+import re
 import sys
 import torch
 
@@ -69,7 +69,7 @@ def generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=None,
 
     # Process the cloud in batches
     for i in progress_bar(range(0, len(cloud), batch_size), parent=masterBar):
-        batch = cloud[i:i + batch_size]
+        batch = cloud[i:i + batch_size,:3] # Get batched points and only use coordinates
         ids, distances, offsets = closest_cylinder_cuda_batch(batch, start, radius, axis_length, axis_unit, IDs, device)
 
         # Store results
@@ -79,18 +79,50 @@ def generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=None,
 
     return output_data
 
-def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024 ):
+def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=False ):
 
     device = get_device()
     
     # Create list of paths going to the clouds and cylinders
     cloudList = [os.path.join( cloudDir, file ) for file in os.listdir( cloudDir ) if file.endswith(".npy") ]
-    cylinderList = [os.path.join( cylinderDir, file ) for file in os.listdir( cylinderDir ) if 
-    file.endswith(".csv")]
+    cylinderList = [os.path.join( cylinderDir, file ) for file in os.listdir( cylinderDir ) if file.endswith(".csv")]
+
+    def clean_filenames(file_paths):
+        """
+        Cleans the specified list of file paths by removing all characters
+        that are not numbers or underscores from the basenames.
+
+        :param file_paths: List of file paths to be cleaned.
+        """
+        for file_path in file_paths:
+            # Get the directory, basename, and extension of the file
+            directory, filename = os.path.split(file_path)
+            base, ext = os.path.splitext(filename)
+            
+            # Clean the basename: remove letters, points, and any invalid characters
+            cleaned_base = re.sub(r'[^\d_]', '', base)
+            
+            # Generate the new filename
+            new_filename = f"{cleaned_base}{ext}"
+            new_path = os.path.join(directory, new_filename)
+            
+            # Rename the file if the name has changed
+            if filename != new_filename:
+                os.rename(file_path, new_path)
+                print(f"Renamed: {file_path} -> {new_path}")
 
     def get_prefix(path):
         parts = os.path.basename(path).split('.')[0].split('_')
         return int(parts[0]), int(parts[1])  # Convert to integers for proper numerical sorting
+    
+    # Clean data if asked 
+    if clean_data:
+        clean_filenames( cloudList )
+        clean_filenames( cylinderList )
+
+        # Recreate the lists
+        cloudList = [os.path.join( cloudDir, file ) for file in os.listdir( cloudDir ) if file.endswith(".npy") ]
+        cylinderList = [os.path.join( cylinderDir, file ) for file in os.listdir( cylinderDir ) if file.endswith(".csv")]
 
     cloudList.sort(key=get_prefix)
     cylinderList.sort(key=get_prefix)
@@ -122,4 +154,4 @@ if __name__ == "__main__":
     cloudDir = os.path.join( os.getcwd(), 'data', 'raw', 'cloud')
     labelDir = os.path.join( os.getcwd(), 'data', 'labeled', 'cloud')
 
-    label_clouds( cloudDir, cylinderDir, labelDir )
+    label_clouds( cloudDir, cylinderDir, labelDir, clean_data=True )
