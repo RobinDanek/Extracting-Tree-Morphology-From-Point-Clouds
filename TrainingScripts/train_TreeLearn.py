@@ -95,7 +95,7 @@ if __name__ == "__main__":
     ]
 
     # Model
-    model = TreeLearn(dim_feat=0, use_coords=True, use_feats=False, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
+    model = TreeLearn(dim_feat=0, use_coords=True, use_feats=True, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
 
     # Scheduler and optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)

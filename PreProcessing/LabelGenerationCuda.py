@@ -12,6 +12,7 @@ parentDir = os.path.dirname( cwd )
 sys.path.append(parentDir)
 
 from Modules.Utils import get_device
+from Modules.Features import add_features
 
 ############### FUNCTIONS ####################
 
@@ -79,7 +80,7 @@ def generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=None,
 
     return output_data
 
-def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=False ):
+def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=False, use_features=True ):
 
     device = get_device()
     
@@ -137,6 +138,10 @@ def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=F
 
         # Get the labeled data
         output_data = generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=mb, batch_size=batch_size)
+
+        # Add features to the labeled cloud
+        if use_features:
+            output_data = add_features( output_data )
 
         # Save the output
         fileName = os.path.basename( cloudList[i] ).split('.')[0]

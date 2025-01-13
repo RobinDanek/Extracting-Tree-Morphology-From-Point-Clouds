@@ -12,7 +12,6 @@ class TreeSet(Dataset):
 
         Args:
             data_root (str): Path to the dataset root directory.
-            inner_square_edge_length (float): Edge length for defining the inner area (if needed).
             training (bool): Whether the dataset is used for training or testing.
             logger (object): Logger for printing information.
             data_augmentations (callable, optional): Data augmentation function or pipeline.
@@ -47,7 +46,7 @@ class TreeSet(Dataset):
         # Load data from file
         data_path = self.data_paths[idx]
         data = np.load(data_path)  # Assume data is saved as a tensor
-        points, offsets = torch.from_numpy(data[:, :3]), torch.from_numpy(data[:, 3:6])
+        points, offsets, features = torch.from_numpy(data[:, :3]), torch.from_numpy(data[:, 3:6]), torch.from_numpy(data[:, 7:])
 
         # Calculate semantic labels and masks
         offset_norms = offsets.norm(dim=1)
@@ -58,7 +57,7 @@ class TreeSet(Dataset):
         if self.data_augmentations and self.training:
             points, offsets = self.data_augmentations(points, offsets)
 
-        return points, offsets, semantic_label, offset_mask
+        return points, features, offsets, semantic_label, offset_mask
     
     def collate_fn(self, batch):
         """
@@ -71,6 +70,7 @@ class TreeSet(Dataset):
             dict: Batched data for model input.
         """
         xyzs = []
+        feats = []
         batch_ids = []
         semantic_labels = []
         offset_labels = []
@@ -80,10 +80,11 @@ class TreeSet(Dataset):
         batch_id = 0
 
         for data in batch:
-            points, offsets, semantic_label, offset_mask = data
+            points, features, offsets, semantic_label, offset_mask = data
             num_points = len(points)
 
             xyzs.append(points)
+            feats.append( features )
             batch_ids.append(torch.full((num_points,), batch_id, dtype=torch.long))
             semantic_labels.append(semantic_label)
             offset_labels.append(offsets)
@@ -94,6 +95,7 @@ class TreeSet(Dataset):
 
         # Combine into tensors
         xyzs = torch.cat(xyzs, 0).float()
+        feats = torch.cat(feats, 0).float()
         batch_ids = torch.cat(batch_ids, 0)
         semantic_labels = torch.cat(semantic_labels, 0).long()
         offset_labels = torch.cat(offset_labels, 0).float()
@@ -101,6 +103,7 @@ class TreeSet(Dataset):
 
         return {
             'coords': xyzs,
+            'feats': feats
             'batch_ids': batch_ids,
             'semantic_labels': semantic_labels,
             'offset_labels': offset_labels,

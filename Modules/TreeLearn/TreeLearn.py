@@ -93,8 +93,8 @@ class TreeLearn(nn.Module):
         return output
 
     @cuda_cast
-    def forward_backbone(self, coords, batch_ids, batch_size, **kwargs):
-        voxel_feats, voxel_coords, v2p_map, spatial_shape = voxelize(coords, batch_ids, batch_size, self.voxel_size, self.use_coords, self.use_feats, max_num_points_per_voxel=self.max_num_points_per_voxel)
+    def forward_backbone(self, coords, feats, batch_ids, batch_size, **kwargs):
+        voxel_feats, voxel_coords, v2p_map, spatial_shape = voxelize(torch.hstack([coords, feats]), batch_ids, batch_size, self.voxel_size, self.use_coords, self.use_feats, max_num_points_per_voxel=self.max_num_points_per_voxel)
         #print(f"######### SPATIAL SHAPE: {spatial_shape} ###############")
         if self.spatial_shape is not None:
             spatial_shape = torch.tensor(self.spatial_shape, device=voxel_coords.device)
@@ -132,7 +132,7 @@ class TreeLearn(nn.Module):
 
 
 
-def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, max_num_points_per_voxel, epsilon=1):
+def voxelize(feats, batch_ids, batch_size, voxel_size, use_coords, use_feats, max_num_points_per_voxel, epsilon=1):
     """
     Voxelize point clouds with batch IDs, tailored for TreeSet-style datasets.
 
@@ -159,9 +159,7 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
     # Process each batch
     for i in range(batch_size):
         # Extract features for the current batch
-        feats_one_element = coords[batch_ids == i]
-        if feats_one_element.size(0) == 0:
-            continue
+        feats_one_element = feats[batch_ids == i]
 
         # Calculate min and max ranges for voxelization
         min_range = torch.min(feats_one_element[:, :3], dim=0).values
@@ -171,10 +169,10 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
         voxelizer = PointToVoxel(
             vsize_xyz=[voxel_size, voxel_size, voxel_size],
             coors_range_xyz=min_range.tolist() + max_range.tolist(),
-            num_point_features=coords.shape[1],
-            max_num_voxels=coords.size(0),
+            num_point_features=feats.shape[1],
+            max_num_voxels=feats.size(0),
             max_num_points_per_voxel=max_num_points_per_voxel,
-            device=coords.device,
+            device=feats.device,
         )
 
         # Generate voxel data
@@ -184,11 +182,6 @@ def voxelize(coords, batch_ids, batch_size, voxel_size, use_coords, use_feats, m
             continue  # Skip this batch if no valid voxels were generated
         #print(f"Batch {i}: v2p_map size={v2p_map.size()}")
         assert torch.sum(v2p_map == -1) == 0, f"Invalid entries in v2p_map for batch {i}"
-
-
-
-        # Ensure no invalid mappings
-        assert torch.sum(v2p_map == -1) == 0
 
         # Adjust voxel coordinates and add batch ID
         voxel_coord[:, [0, 2]] = voxel_coord[:, [2, 0]]  # Swap X and Z axes
