@@ -185,7 +185,7 @@ def voxelize(feats, batch_ids, batch_size, voxel_size, use_coords, use_feats, ma
 
         # Adjust voxel coordinates and add batch ID
         voxel_coord[:, [0, 2]] = voxel_coord[:, [2, 0]]  # Swap X and Z axes
-        voxel_coord = torch.cat((torch.ones((len(voxel_coord), 1), device=coords.device) * i, voxel_coord), dim=1)
+        voxel_coord = torch.cat((torch.ones((len(voxel_coord), 1), device=feats.device) * i, voxel_coord), dim=1)
 
         # Compute mean features for each voxel
         zero_rows = torch.sum(voxel_feat == 0, dim=2) == voxel_feat.shape[2]

@@ -48,7 +48,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
                 losses_dict[key].append(value.detach().cpu().item())
 
         # backward
-        scaler.scale(loss).backward()
+        scaler.scale(loss*50).backward()
         # if config.grad_norm_clip:
         torch.nn.utils.clip_grad_norm_(model.parameters(), True, norm_type=2)
         scaler.step(optimizer)

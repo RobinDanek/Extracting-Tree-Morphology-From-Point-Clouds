@@ -46,7 +46,7 @@ class TreeSet(Dataset):
         # Load data from file
         data_path = self.data_paths[idx]
         data = np.load(data_path)  # Assume data is saved as a tensor
-        points, offsets, features = torch.from_numpy(data[:, :3]), torch.from_numpy(data[:, 3:6]), torch.from_numpy(data[:, 7:])
+        points, offsets, features = torch.from_numpy(data[:, :3]).float(), torch.from_numpy(data[:, 3:6]).float(), torch.from_numpy(data[:, 7:]).float()
 
         # Calculate semantic labels and masks
         offset_norms = offsets.norm(dim=1)
@@ -103,7 +103,7 @@ class TreeSet(Dataset):
 
         return {
             'coords': xyzs,
-            'feats': feats
+            'feats': feats,
             'batch_ids': batch_ids,
             'semantic_labels': semantic_labels,
             'offset_labels': offset_labels,
@@ -111,59 +111,6 @@ class TreeSet(Dataset):
             'batch_size': batch_id
         }
 
-
-# class TreeSet(Dataset):
-#     def __init__(self, data_path, noise_distance):
-#         """
-#         Initialize the dataset.
-        
-#         Args:
-#             data (torch.Tensor): Tensor of shape (N, 6), where:
-#                 - First 3 dimensions are point cloud coordinates (x, y, z).
-#                 - Next 3 dimensions are offset labels (dx, dy, dz).
-#             noise_distance (float): Threshold for determining noisy points based on the norm of offset vectors.
-#         """
-#         data = np.load( data_path )
-
-#         self.coordinates = data[:, :3]  # Extract point cloud coordinates
-#         self.offset_labels = data[:, 3:]  # Extract offset labels
-#         self.noise_distance = noise_distance
-        
-#         # Compute norms of offset vectors
-#         self.offset_norms = self.offset_labels.norm(dim=1)
-        
-#         # Create semantic labels: 0 for valid points, 1 for noisy points
-#         self.semantic_labels = (self.offset_norms >= self.noise_distance).long()
-        
-#         # Create mask for valid offset labels
-#         self.offset_mask = self.offset_norms <= self.noise_distance
-
-#     def __len__(self):
-#         """
-#         Return the number of points in the dataset.
-#         """
-#         return len(self.coordinates)
-
-#     def __getitem__(self, idx):
-#         """
-#         Get a single data sample.
-        
-#         Args:
-#             idx (int): Index of the sample to retrieve.
-            
-#         Returns:
-#             dict: A dictionary with the following keys:
-#                 - 'coordinates': The point cloud coordinates (x, y, z).
-#                 - 'offset_labels': The offset vector (dx, dy, dz).
-#                 - 'semantic_labels': Semantic label for the point (0 or 1).
-#                 - 'offset_mask': Mask for the offset vector (True for valid, False for noisy).
-#         """
-#         return {
-#             'coords': self.coordinates[idx],
-#             'offset_labels': self.offset_labels[idx],
-#             'semantic_labels': self.semantic_labels[idx],
-#             'masks_off': self.offset_mask[idx]
-#         }
 
 def get_dataloader(dataset, batch_size, num_workers, training):
     """

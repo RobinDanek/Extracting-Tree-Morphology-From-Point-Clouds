@@ -44,12 +44,24 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
 
     # Compute distances to the cylinder surface
     distances_to_axis = torch.norm(points[:, None, :] - projection_points_clamped, dim=2)  # Shape: (N, M)
-    distances_to_surface = torch.abs(distances_to_axis - radius[None, :])  # Shape: (N, M)
+    distances_to_surfaces = torch.abs(distances_to_axis - radius[None, :])  # Shape: (N, M)
 
     # Find the closest cylinder for each point
-    closest_indices = torch.argmin(distances_to_surface, dim=1)  # Shape: (N,)
-    closest_distances = distances_to_surface[range(len(points)), closest_indices]  # Shape: (N,)
+    closest_indices = torch.argmin(distances_to_surfaces, dim=1)  # Shape: (N,)
+    closest_distances = distances_to_surfaces[range(len(points)), closest_indices]  # Shape: (N,)
     closest_offsets = projection_points_clamped[range(len(points)), closest_indices] - points  # Shape: (N, 3)
+
+    # Adjust the offset by subtracting the cylinder radius to project onto the surface
+    norm_offsets = torch.norm(closest_offsets, dim=1, keepdim=True)  # Compute the length of each offset vector
+    normalized_offsets = closest_offsets / norm_offsets  # Normalize the offset vectors
+    # Expand closest_distances to match the shape of normalized_offsets (N, 3)
+    closest_distances_expanded = closest_distances.unsqueeze(1).expand(-1, 3)
+
+    # Now, the element-wise multiplication will work
+    surface_offsets = normalized_offsets * closest_distances_expanded
+
+    # Set the new offsets as the surface offsets
+    closest_offsets = surface_offsets
 
     # Get the IDs of the closest cylinders
     closest_ids = IDs[closest_indices]
@@ -159,4 +171,4 @@ if __name__ == "__main__":
     cloudDir = os.path.join( os.getcwd(), 'data', 'raw', 'cloud')
     labelDir = os.path.join( os.getcwd(), 'data', 'labeled', 'cloud')
 
-    label_clouds( cloudDir, cylinderDir, labelDir, clean_data=True )
+    label_clouds( cloudDir, cylinderDir, labelDir, clean_data=True, use_features=False )
