@@ -38,8 +38,11 @@ def log_parameters(args):
     logging.info(f"Early stopping patience: {args.patience_es}")
     logging.info(f"Warmup steps: {args.warmup_t}")
     logging.info(f"Minimum learning rate: {args.lr_min}")
+    logging.info(f"Cosine initial t: {args.t_initial}")
     logging.info(f"Progress bar disabled: {args.no_progress_bar}")
     logging.info(f"U-Net depth:  {args.blocks}")
+    logging.info(f"Use features:  {args.features}")
+    logging.info(f"use coords:  {args.coords}")
     logging.info(f"Noise Threshold: {args.noise_threshold}")
     logging.info(f"Spatial Shape: {args.spatial_shape}")
     logging.info(f"Model save path: {args.model_save_path}")
@@ -49,14 +52,17 @@ def parse_args():
     
     # Define command-line arguments
     parser.add_argument("--batch_size", type=int, default=5, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=200, help="Number of epochs for training")
-    parser.add_argument("--lr", type=float, default=0.002, help="Learning rate for the optimizer")
+    parser.add_argument("--epochs", type=int, default=1000, help="Number of epochs for training")
+    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for the optimizer")
     parser.add_argument("--voxel_size", type=float, default=0.1, help="Voxel size for the model")
-    parser.add_argument("--patience_es", type=int, default=15, help="Patience for early stopping")
-    parser.add_argument("--warmup_t", type=int, default=50, help="Warmup steps for the scheduler")
+    parser.add_argument("--patience_es", type=int, default=25, help="Patience for early stopping")
+    parser.add_argument("--warmup_t", type=int, default=20, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
     parser.add_argument("--blocks", type=int, default=5, help="The depth of the U-Net")
+    parser.add_argument("--coords", type=bool, default=True, help="Whether to use coordinates for training")
+    parser.add_argument("--features", type=bool, default=False, help="Whether to use features for training")
+    parser.add_argument("--t_initial", type=int, default=50, help="The number of epochs after which the learning rate for cosine is reseted")
     parser.add_argument("--model_save_path", type=str, default=None, help="The path to which the model is saved")
     parser.add_argument("--noise_threshold", default=0.05, type=float, help="The threshold offset label length for training")
     parser.add_argument("--spatial_shape", type=int, nargs=3, default=[30,30,50], help="The spatial extend for voxelized clouds. Choose it large enough for the network depth.")
@@ -95,13 +101,13 @@ if __name__ == "__main__":
     ]
 
     # Model
-    model = TreeLearn(dim_feat=0, use_coords=True, use_feats=True, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
+    model = TreeLearn(dim_feat=1, use_coords=args.coords, use_feats=args.features, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
 
     # Scheduler and optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
     scheduler = CosineLRScheduler(
         optimizer,
-        t_initial=1300,
+        t_initial=args.t_initial,
         lr_min=args.lr_min,
         cycle_decay=1,
         warmup_lr_init=0.00001,
