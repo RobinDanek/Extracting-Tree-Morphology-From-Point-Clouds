@@ -29,7 +29,7 @@ class TreeLearn(nn.Module):
                  use_feats=True,
                  use_coords=False,
                  spatial_shape=None,
-                 max_num_points_per_voxel=3,
+                 max_num_points_per_voxel=10,
                  voxel_size=0.1,
                  noise_distance=0.05,
                  **kwargs):

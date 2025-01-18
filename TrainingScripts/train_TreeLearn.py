@@ -94,11 +94,12 @@ if __name__ == "__main__":
     val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
 
     # spatial shape =  [30m,30m,50m], depends on voxel size
-    spatial_shape = [ 
-        np.round( args.spatial_shape[0]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[1]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[2]/args.voxel_size ).astype(int) 
-    ]
+    # spatial_shape = [ 
+    #     np.round( args.spatial_shape[0]/args.voxel_size ).astype(int), 
+    #     np.round( args.spatial_shape[1]/args.voxel_size ).astype(int), 
+    #     np.round( args.spatial_shape[2]/args.voxel_size ).astype(int) 
+    # ]
+    spatial_shape=None
 
     # Model
     model = TreeLearn(dim_feat=1, use_coords=args.coords, use_feats=args.features, num_blocks=args.blocks, voxel_size=args.voxel_size, spatial_shape=spatial_shape).cuda()
