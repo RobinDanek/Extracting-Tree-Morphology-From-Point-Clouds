@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import torch
+import argparse
 
 # Get access to all the files in the repository
 cwd = os.getcwd()
@@ -55,9 +56,8 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
 
     # Step 3.2: Normalize the rejection vector (only for non-perpendicular cases)
     norm_rejected = torch.norm(rejected_vectors, dim=2, keepdim=True)  # Shape: (N, M, 1)
-    valid_mask = norm_rejected.squeeze() > 1e-6  # Mask for valid (non-zero) vectors
     new_axis_unit = torch.zeros_like(rejected_vectors)
-    new_axis_unit[valid_mask] = rejected_vectors[valid_mask] / norm_rejected[valid_mask]
+    new_axis_unit = rejected_vectors / norm_rejected
 
     # Step 3.3: Scale to 2 × radius and anchor it at the clamped projection point (only for non-perpendicular cases)
     new_axis_scaled = new_axis_unit * (2 * radius.view(1, -1, 1))  # Shape: (N, M, 3)
@@ -109,81 +109,6 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
     closest_ids = IDs[closest_indices]
 
     return closest_ids.cpu().numpy(), closest_distances.cpu().numpy(), closest_offsets.cpu().numpy()
-
-# def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, IDs, device):
-#     """
-#     Find the closest cylinder to a batch of points using GPU acceleration with PyTorch.
-    
-#     Parameters:
-#         points: A batch of 3D points as a torch tensor of shape (N, 3).
-#         start, radius, axis_length, axis_unit, IDs: Cylinder data as PyTorch tensors.
-#         device: CUDA device.
-    
-#     Returns:
-#         IDs, distances, and offsets for the closest cylinders for each point.
-#     """
-#     # Convert points to PyTorch tensors
-#     points = torch.tensor(points, dtype=torch.float32, device=device)
-
-#     # Compute vector from start to points (broadcasting)
-#     point_vectors = points[:, None, :] - start[None, :, :]  # Shape: (N, M, 3)
-
-#     # Projection of point_vector onto the cylinder axis
-#     projection_lengths = torch.sum(point_vectors * axis_unit[None, :, :], dim=2, keepdim=True)  # Shape: (N, M, 1)
-
-#     # Clamp the projection to the cylinder segment
-#     zero_tensor = torch.zeros_like(projection_lengths)
-#     projection_lengths_clamped = torch.clamp(projection_lengths, zero_tensor, axis_length[None, :, :])
-#     projection_points_clamped = start[None, :, :] + projection_lengths_clamped * axis_unit[None, :, :]
-
-#     # Compute distances to the cylinder axis
-#     distances_to_axis = torch.norm(points[:, None, :] - projection_points_clamped, dim=2)  # Shape: (N, M)
-
-#     # Compute signed distances to the surface: positive if outside, negative if inside
-#     signed_distances = distances_to_axis - radius.view(1, -1)  # Shape: (N, M)
-
-#     # Find closest indices based on surface distance
-#     closest_surface_indices = torch.argmin(torch.abs(signed_distances), dim=1)
-
-#     # Find closest indices based on axis distance
-#     closest_axis_indices = torch.argmin(distances_to_axis, dim=1)
-
-#     # Determine where the two indices disagree
-#     index_mismatch = closest_surface_indices != closest_axis_indices
-
-#     # Compute projection vectors
-#     projection_vectors = projection_points_clamped - points[:, None, :]  # (N, M, 3)
-    
-#     # Dot product between projection vector and cylinder axis
-#     dot_products = torch.sum(projection_vectors * axis_unit[None, :, :], dim=2)  # (N, M)
-
-#     # Get dot products for both closest indices
-#     dot_surface = dot_products[range(len(points)), closest_surface_indices]
-#     dot_axis = dot_products[range(len(points)), closest_axis_indices]
-
-#     # Select index with the smaller absolute dot product (favor perpendicular offset)
-#     preferred_indices = closest_surface_indices.clone()
-#     preferred_indices[index_mismatch] = torch.where(
-#         torch.abs(dot_surface[index_mismatch]) < torch.abs(dot_axis[index_mismatch]),
-#         closest_surface_indices[index_mismatch],
-#         closest_axis_indices[index_mismatch]
-#     )
-
-#     # Compute final distances and offsets
-#     closest_distances = signed_distances[range(len(points)), preferred_indices]
-#     projection_vectors_final = projection_points_clamped[range(len(points)), preferred_indices] - points
-#     norm_projection = torch.norm(projection_vectors_final, dim=1, keepdim=True)
-
-#     normalized_direction = torch.zeros_like(projection_vectors_final)
-#     normalized_direction = projection_vectors_final / norm_projection
-
-#     # Compute surface offsets
-#     closest_offsets = normalized_direction * closest_distances.unsqueeze(1)
-
-#     # Get the IDs of the closest cylinders
-#     closest_ids = IDs[preferred_indices]
-
-#     return closest_ids.cpu().numpy(), closest_distances.cpu().numpy(), closest_offsets.cpu().numpy()
 
 def generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=None, batch_size=1024):
     output_data = np.zeros((len(cloud), 7))  # point coordinates, offset vector, cylinder ID
@@ -285,9 +210,25 @@ def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=F
 ############## MAIN ################
 
 if __name__ == "__main__":
+    # Argument parser
+    parser = argparse.ArgumentParser(description="Label point clouds using cylinder models.")
 
-    cylinderDir = os.path.join(os.getcwd(), 'data', 'raw', 'QSM', 'detailed')
-    cloudDir = os.path.join( os.getcwd(), 'data', 'raw', 'cloud')
-    labelDir = os.path.join( os.getcwd(), 'data', 'labeled', 'cloud')
+     # Define arguments
+    parser.add_argument("--cylinderDir", type=str, default=os.path.join('data', 'raw', 'QSM', 'detailed'),
+                        help="Directory containing the QSM cylinder CSV files.")
+    parser.add_argument("--cloudDir", type=str, default=os.path.join('data', 'raw', 'cloud'),
+                        help="Directory containing the raw point clouds.")
+    parser.add_argument("--labelDir", type=str, default=os.path.join('data', 'labeled', 'offset', 'cloud'),
+                        help="Directory where labeled clouds will be saved.")
+    parser.add_argument("--clean_data", action="store_true", help="Enable data cleaning before processing.")
+    parser.add_argument("--use_features", action="store_true", help="Use additional features for labeling.")
 
-    label_clouds( cloudDir, cylinderDir, labelDir, clean_data=True, use_features=False )
+    # Parse arguments
+    args = parser.parse_args()
+
+    cloudDir = os.path.join( os.getcwd(), args.cloudDir )
+    cylinderDir = os.path.join( os.getcwd(), args.cylinderDir )
+    labelDir = os.path.join( os.getcwd(), args.labelDir )
+
+    # Call function with parsed arguments
+    label_clouds(cloudDir, cylinderDir, labelDir, clean_data=args.clean_data, use_features=args.use_features)
