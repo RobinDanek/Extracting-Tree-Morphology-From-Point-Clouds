@@ -31,7 +31,8 @@ class TreeLearn(nn.Module):
                  spatial_shape=None,
                  max_num_points_per_voxel=10,
                  voxel_size=0.1,
-                 noise_distance=0.05,
+                 loss_multiplier_semantic=1,
+                 loss_multiplier_offset=1,
                  **kwargs):
 
         super().__init__()
@@ -41,7 +42,8 @@ class TreeLearn(nn.Module):
         self.use_coords = use_coords
         self.spatial_shape = spatial_shape
         self.max_num_points_per_voxel = max_num_points_per_voxel
-        self.noise_distance = noise_distance
+        self.loss_multiplier_semantic = loss_multiplier_semantic
+        self.loss_multiplier_offset = loss_multiplier_offset
 
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
         
@@ -85,8 +87,24 @@ class TreeLearn(nn.Module):
 
 
     def forward(self, batch, return_loss):
-        backbone_output, v2p_map = self.forward_backbone(**batch)
-        output = self.forward_head(backbone_output, v2p_map)
+        backbone_output, v2p_map = self.forward_backbone(
+            coords=batch["coords"],
+            feats=batch["feats"],
+            batch_ids=batch["batch_ids"],
+            batch_size=batch["batch_size"]
+        )
+        
+        noise_backbone_output, noise_v2p_map = None, None
+        if "noise_coords" in batch and batch["noise_coords"] is not None:
+            noise_backbone_output, noise_v2p_map = self.forward_backbone(
+                coords=batch["noise_coords"],
+                feats=batch["noise_feats"],
+                batch_ids=batch["noise_batch_ids"],
+                batch_size=batch["batch_size"]
+            )
+        
+        output = self.forward_head(backbone_output, v2p_map, noise_backbone_output, noise_v2p_map)
+        
         if return_loss:
             output = self.get_loss(model_output=output, **batch)
         
@@ -110,11 +128,17 @@ class TreeLearn(nn.Module):
         return output, v2p_map
     
 
-    def forward_head(self, backbone_output, v2p_map):
+    def forward_head(self, backbone_output, v2p_map, noise_backbone_output, noise_v2p_map):
         output = dict()
         backbone_feats = backbone_output.features[v2p_map]
         output['backbone_feats'] = backbone_feats
-        output['semantic_prediction_logits'] = self.semantic_linear(backbone_feats)
+        
+        if noise_backbone_output is not None:
+            noise_backbone_feats = noise_backbone_output.features[noise_v2p_map]
+            output['semantic_prediction_logits'] = self.semantic_linear(noise_backbone_feats)
+        else:
+            output['semantic_prediction_logits'] = self.semantic_linear(backbone_feats)
+        
         output['offset_predictions'] = self.offset_linear(backbone_feats)
         return output
 
@@ -123,8 +147,8 @@ class TreeLearn(nn.Module):
         loss_dict = dict()
         semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(), model_output['offset_predictions'][masks_off].float(), 
                                                             semantic_labels, offset_labels[masks_off], n_points=N_POINTS)
-        loss_dict['semantic_loss'] = semantic_loss * LOSS_MULTIPLIER_SEMANTIC
-        loss_dict['offset_loss'] = offset_loss
+        loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
+        loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
 
         loss = sum(_value for _value in loss_dict.values())
         return loss, loss_dict

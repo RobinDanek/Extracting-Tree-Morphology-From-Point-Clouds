@@ -17,9 +17,20 @@ import seaborn as sns
 # This function creates 5 plots for investigating the behaviour of a model on sample 32_2
 # The mean nearest neighbour distance is also computed for the whole cloud and the slices
 
-def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_blocks=3, voxel_size=0.02, noise_threshold=0.1, save_plots=False):
+def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_blocks=3, voxel_size=0.02, noise_threshold=0.1, save_plots=False, test_noise=False, modelPath_noise=None,
+              dim_feat_noise=1, use_coords_noise=True, use_feats_noise=False, num_blocks_noise=5, voxel_size_noise=0.02):
     # Load the model and make predictions
-    points, labels, offset_predictions = loadAndMakePrediction(modelPath, dim_feat, use_coords, use_feats, num_blocks, voxel_size)
+    points, labels, offset_predictions, feats = loadAndMakePrediction(modelPath, dim_feat, use_coords, use_feats, num_blocks, voxel_size)
+
+    if not modelPath_noise:
+        modelPath_noise = modelPath
+        dim_feat_noise = dim_feat
+        use_coords_noise = use_coords
+        use_feats_noise = use_feats
+        num_blocks_noise = num_blocks
+
+    if test_noise:
+        noise_predictions_orig, noise_predictions_trans = makeNoisePrediction(modelPath_noise, points, feats, offset_predictions, dim_feat_noise, use_coords_noise, use_feats_noise, num_blocks_noise, voxel_size)
 
     # Create plot path
     if save_plots:
@@ -27,7 +38,7 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
     else:
         save_path = None
 
-    # Compute nearest neighbor distances
+    # Compute nearest neighbor distances 
     mean_nn_orig, nn_distances_orig = nearestNeighbourDistances(points, k=1)
     mean_nn_trans, nn_distances_trans = nearestNeighbourDistances(points + offset_predictions, k=1)
 
@@ -53,8 +64,6 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
     plot_log_nn_distances_with_histograms(nn_distances_orig_5, nn_distances_trans_5, mean_nn_orig_5, mean_nn_trans_5, k=5, save_path=save_path)
 
     for i, (bound, view) in enumerate(zip(bounds, viewFrom)):
-        if save_plots:
-            save_path = os.path.join( plot_dir, f'slice_{i}.png' )
 
         # Apply slicing mask
         x_min, x_max, y_min, y_max, z_min, z_max = bound
@@ -68,6 +77,9 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
         _, nn_distances_orig_slice = nearestNeighbourDistances(points[mask], k=1)
         _, nn_distances_trans_slice = nearestNeighbourDistances((points + offset_predictions)[mask], k=1)
 
+        if save_plots:
+            save_path = os.path.join( plot_dir, f'slice_{i}.png' )
+
         # Call slice1 function with calculated mean NN distances
         slice(
             points, labels, offset_predictions,
@@ -78,6 +90,20 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
             viewFrom=view,
             save_path=save_path
         )
+
+        if test_noise:
+            if save_plots:
+                save_path = os.path.join( plot_dir, f'slice_{i}_N.png' )
+
+            # Call slice1 function with calculated mean NN distances
+            slice_noise(
+                points, offset_predictions,
+                noise_mask_orig=noise_predictions_orig,
+                noise_mask_trans=noise_predictions_trans,
+                slice_bounds=bound,
+                viewFrom=view,
+                save_path=save_path
+            )
 
 def create_model_evaluation_path(modelPath):
     # Extract model name (file name without extension)
@@ -141,8 +167,50 @@ def loadAndMakePrediction(modelPath, dim_feat=1, use_coords=True, use_feats=Fals
 
     offset_predictions = output["offset_predictions"].cpu().numpy()  # Shape: (N, 3) 
     points = points.cpu().numpy()  # Convert to NumPy for plotting
+    feats = feats.cpu().numpy()
 
-    return points, labels, offset_predictions
+    return points, labels, offset_predictions, feats
+
+def makeNoisePrediction(modelPath, points, feats, offset_predictions, dim_feat=1, use_coords=True, use_feats=False, num_blocks=3, voxel_size=0.02):
+    model = TreeLearn(dim_feat=dim_feat, use_coords=use_coords, use_feats=use_feats, num_blocks=num_blocks, voxel_size=voxel_size, spatial_shape=None).cuda()
+    model.load_state_dict(torch.load( modelPath, weights_only=True ))
+    model.eval()
+
+    points = torch.from_numpy( points[:, :3] ).float()
+    # feats = torch.zeros(len(points)).float()
+    feats = torch.from_numpy(feats).float()
+    batch_ids = torch.zeros(len(points), dtype=torch.long)
+    offset_predictions = torch.from_numpy( offset_predictions ).float()
+
+    batch_orig = {
+        "coords": points,
+        "feats": feats,
+        "batch_ids": batch_ids,
+        "batch_size": 1,  # Only one tree
+    }
+
+    batch_trans = {
+        "coords": torch.add(points, offset_predictions),
+        "feats": feats,
+        "batch_ids": batch_ids,
+        "batch_size": 1,  # Only one tree
+    }
+
+    with torch.no_grad():
+        output_orig = model.forward( batch_orig, return_loss=False )
+        output_trans = model.forward( batch_trans, return_loss=False )
+
+    noise_predictions_orig = output_orig["semantic_prediction_logits"]  # Shape: (N, 3) 
+    noise_predictions_trans = output_trans["semantic_prediction_logits"]  # Shape: (N, 3)
+
+    probs_orig = torch.sigmoid(noise_predictions_orig).cpu().numpy()
+    probs_trans = torch.sigmoid(noise_predictions_trans).cpu().numpy()
+
+    # Apply threshold to determine noise (assuming the last column represents noise probability)
+    noise_mask_orig = probs_orig[:, -1] > 0.5
+    noise_mask_trans = probs_trans[:, -1] > 0.5
+
+    return noise_mask_orig, noise_mask_trans
 
 ############ PLOTTING FUNCTIONS ############
 
@@ -410,3 +478,95 @@ def slice(points, labels, offset_predictions, noise_threshold, slice_bounds,
         plt.savefig( save_path, dpi=600 )
     plt.show()
 
+
+
+def slice_noise(points, offset_predictions, noise_mask_orig, noise_mask_trans, slice_bounds, viewFrom='z', save_path=None):
+    """
+    Plots a 2x2 subplot with original, transformed, and filtered point clouds, 
+    highlighting noise points in red.
+    
+    Parameters:
+        points (numpy.ndarray): Original 3D points (N, 3).
+        noise_mask_orig (numpy.ndarray): Boolean array indicating noise in original points (N,).
+        noise_mask_trans (numpy.ndarray): Boolean array indicating noise in transformed points (N,).
+        slice_bounds (list): [x_min, x_max, y_min, y_max, z_min, z_max] for slicing.
+        viewFrom (str): Which view to plot from ('z' or 'y').
+        save_path (str, optional): Path to save the figure.
+    """
+    # Extract slice bounds
+    x_min, x_max, y_min, y_max, z_min, z_max = slice_bounds
+
+    # Create mask for slicing
+    mask = (
+        (points[:, 0] >= x_min) & (points[:, 0] <= x_max) &
+        (points[:, 1] >= y_min) & (points[:, 1] <= y_max) &
+        (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+    )
+
+    # Apply mask to get sliced points and noise classification
+    points_slice = points[mask]
+    offset_predictions_slice = offset_predictions[mask]
+    noise_mask_orig_slice = noise_mask_orig[mask]
+    noise_mask_trans_slice = noise_mask_trans[mask]
+
+    # Compute transformed points
+    points_transformed = points_slice + offset_predictions_slice  # Small offset for visualization
+
+    # Assign colors: Noise (red), Non-noise (blue)
+    colors_orig = np.where(noise_mask_orig_slice, 'red', 'blue')
+    colors_trans = np.where(noise_mask_trans_slice, 'red', 'blue')
+
+    # Remove noise for filtered versions
+    filtered_points_orig = points_slice[~noise_mask_orig_slice]
+    filtered_points_trans = points_transformed[~noise_mask_trans_slice]
+
+    # --- Create the figure with 2x2 subplots ---
+    fig, axs = plt.subplots(2, 2, figsize=(12, 12), sharex=True, sharey=True)
+
+    # Determine which axes to use for plotting based on `viewFrom`
+    if viewFrom == 'z':  # XY projection
+        x_vals, y_vals = points_slice[:, 0], points_slice[:, 1]
+        x_vals_trans, y_vals_trans = points_transformed[:, 0], points_transformed[:, 1]
+        x_vals_filtered, y_vals_filtered = filtered_points_orig[:, 0], filtered_points_orig[:, 1]
+        x_vals_filtered_trans, y_vals_filtered_trans = filtered_points_trans[:, 0], filtered_points_trans[:, 1]
+        xlabel, ylabel = "X [m]", "Y [m]"
+    else:  # XZ projection (view from Y)
+        x_vals, y_vals = points_slice[:, 0], points_slice[:, 2]
+        x_vals_trans, y_vals_trans = points_transformed[:, 0], points_transformed[:, 2]
+        x_vals_filtered, y_vals_filtered = filtered_points_orig[:, 0], filtered_points_orig[:, 2]
+        x_vals_filtered_trans, y_vals_filtered_trans = filtered_points_trans[:, 0], filtered_points_trans[:, 2]
+        xlabel, ylabel = "X [m]", "Z [m]"
+
+    # Top Left: Original Points with Noise Highlighted
+    axs[0, 0].scatter(x_vals, y_vals, c=colors_orig, s=5)
+    axs[0, 0].set_title("Original Points (Noise in Red)")
+
+    # Top Right: Transformed Points with Noise Highlighted
+    axs[0, 1].scatter(x_vals_trans, y_vals_trans, c=colors_trans, s=5)
+    axs[0, 1].set_title("Transformed Points (Noise in Red)")
+
+    # Bottom Left: Filtered Original Points
+    axs[1, 0].scatter(x_vals_filtered, y_vals_filtered, c='blue', s=5)
+    axs[1, 0].set_title("Filtered Original Points (Noise Removed)")
+
+    # Bottom Right: Filtered Transformed Points
+    axs[1, 1].scatter(x_vals_filtered_trans, y_vals_filtered_trans, c='blue', s=5)
+    axs[1, 1].set_title("Filtered Transformed Points (Noise Removed)")
+
+    # --- Add Legend in Top Left Subplot ---
+    legend_elements = [
+        Patch(facecolor='blue', edgecolor='black', label='Non-Noise'),
+        Patch(facecolor='red', edgecolor='black', label='Noise')
+    ]
+    axs[0, 0].legend(handles=legend_elements, loc='upper right', fontsize=12)
+
+    # Axis labels and equal aspect ratio
+    for ax in axs.flatten():
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_aspect('equal')
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=600)
+    plt.show()

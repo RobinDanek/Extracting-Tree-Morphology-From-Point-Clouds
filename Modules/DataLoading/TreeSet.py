@@ -6,7 +6,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 class TreeSet(Dataset):
-    def __init__(self, data_root, training, logger=None, data_augmentations=None, noise_distance=0.05):
+    def __init__(self, data_root, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -16,16 +16,30 @@ class TreeSet(Dataset):
             logger (object): Logger for printing information.
             data_augmentations (callable, optional): Data augmentation function or pipeline.
             noise_distance (float): Threshold for determining offset mask and semantic labels.
+            noise_root (str, optional): Path to the noise point clouds directory.
         """
+        # Main dataset paths
         self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.npy')]
+        self.data_dict = {os.path.basename(path): path for path in self.data_paths}
+        
+        # Noise dataset paths (optional)
+        self.noise_root = noise_root
+        self.noise_dict = {}
+        if noise_root:
+            noise_paths = [os.path.join(noise_root, path) for path in os.listdir(noise_root) if path.endswith('.npy')]
+            self.noise_dict = {os.path.basename(path): path for path in noise_paths}
+
         self.training = training
         self.data_augmentations = data_augmentations
         self.noise_distance = noise_distance
+        self.min_height = min_height
 
         if logger:
             self.logger = logger
             mode = 'train' if training else 'test'
             self.logger.info(f"Initialized {mode} dataset with {len(self.data_paths)} scans.")
+            if noise_root:
+                self.logger.info(f"Initialized noise dataset with {len(self.noise_dict)} scans.")
 
     def __len__(self):
         return len(self.data_paths)
@@ -38,26 +52,49 @@ class TreeSet(Dataset):
             idx (int): Index of the item to retrieve.
 
         Returns:
-            points (torch.Tensor): The point cloud (Nx3).
-            offsets (torch.Tensor): The offsets for each point (Nx3).
-            semantic_label (torch.Tensor): Semantic labels for the points (N,).
-            offset_mask (torch.Tensor): Mask for valid offsets (N,).
+            tuple: Main point cloud and noise point cloud data (if noise_root is provided).
         """
-        # Load data from file
+        # Load main data
         data_path = self.data_paths[idx]
-        data = np.load(data_path)  # Assume data is saved as a tensor
-        points, offsets, features = torch.from_numpy(data[:, :3]).float(), torch.from_numpy(data[:, 3:6]).float(), torch.from_numpy(data[:, 7:]).float()
+        file_name = os.path.basename(data_path)
+        data = np.load(data_path)
+        points, offsets, features = (
+            torch.from_numpy(data[:, :3]).float(),
+            torch.from_numpy(data[:, 3:6]).float(),
+            torch.from_numpy(data[:, 7:]).float(),
+        )
 
         # Calculate semantic labels and masks
         offset_norms = offsets.norm(dim=1)
-        semantic_label = (offset_norms > self.noise_distance).long()  # 1 for valid points, 0 for noise
         offset_mask = (offset_norms <= self.noise_distance).bool()  # True for valid offsets
+
+        # Load corresponding noise data if available
+        noise_points, noise_features = None, None
+        if self.noise_root and file_name in self.noise_dict:
+            noise_data = np.load(self.noise_dict[file_name])
+            noise_points = torch.from_numpy(noise_data[:, :3]).float()
+            noise_offsets = torch.from_numpy(noise_data[:, 3:6]).float()
+            noise_features = torch.from_numpy( noise_data[:, 7:] ).float()
+
+            # Overwrite semantic label
+            noise_offset_norms = noise_offsets.norm(dim=1)
+            semantic_label = (noise_offset_norms > self.noise_distance).long() # 1 for valid points, 0 for noise
+        else:
+            semantic_label = (offset_norms > self.noise_distance).long()  # 1 for valid points, 0 for noise
 
         # Apply augmentations if in training mode
         if self.data_augmentations and self.training:
             points, offsets = self.data_augmentations(points, offsets)
 
-        return points, features, offsets, semantic_label, offset_mask
+        return {
+            "points": points,
+            "features": features,
+            "offsets": offsets,
+            "semantic_label": semantic_label,
+            "offset_mask": offset_mask,
+            "noise_points": noise_points,
+            "noise_features": noise_features,
+        }
     
     def collate_fn(self, batch):
         """
@@ -75,20 +112,34 @@ class TreeSet(Dataset):
         semantic_labels = []
         offset_labels = []
         offset_masks = []
+        noise_xyzs, noise_feats, noise_batch_ids = [], [], []
 
         total_points_num = 0
         batch_id = 0
 
         for data in batch:
-            points, features, offsets, semantic_label, offset_mask = data
+            points = data["points"]
+            features = data["features"]
+            offsets = data["offsets"]
+            semantic_label = data["semantic_label"]
+            offset_mask = data["offset_mask"]
+
             num_points = len(points)
 
             xyzs.append(points)
-            feats.append( features )
+            feats.append(features)
             batch_ids.append(torch.full((num_points,), batch_id, dtype=torch.long))
             semantic_labels.append(semantic_label)
             offset_labels.append(offsets)
             offset_masks.append(offset_mask)
+
+            if data["noise_points"] is not None:
+                noise_xyzs.append(data["noise_points"])
+                noise_feats.append(data["noise_features"])
+
+                num_noise_points = len(data["noise_points"])
+
+                noise_batch_ids.append(torch.full((num_noise_points,), batch_id, dtype=torch.long))
 
             total_points_num += num_points
             batch_id += 1
@@ -101,15 +152,22 @@ class TreeSet(Dataset):
         offset_labels = torch.cat(offset_labels, 0).float()
         offset_masks = torch.cat(offset_masks, 0).bool()
 
-        return {
-            'coords': xyzs,
-            'feats': feats,
-            'batch_ids': batch_ids,
-            'semantic_labels': semantic_labels,
-            'offset_labels': offset_labels,
-            'masks_off': offset_masks,
-            'batch_size': batch_id
+        collated_batch = {
+            "coords": xyzs,
+            "feats": feats,
+            "batch_ids": batch_ids,
+            "semantic_labels": semantic_labels,
+            "offset_labels": offset_labels,
+            "masks_off": offset_masks,
+            "batch_size": batch_id,
         }
+
+        if noise_xyzs:
+            collated_batch["noise_coords"] = torch.cat(noise_xyzs, 0).float()
+            collated_batch["noise_feats"] = torch.cat(noise_feats, 0).float()
+            collated_batch["noise_batch_ids"] = torch.cat(noise_batch_ids, 0)
+
+        return collated_batch
 
 
 def get_dataloader(dataset, batch_size, num_workers, training):

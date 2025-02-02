@@ -56,7 +56,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb):
 
     loss_off = np.mean(losses_dict['offset_loss'])
     loss_sem = np.mean(losses_dict['semantic_loss'])
-    loss_total = loss_off + LOSS_MULTIPLIER_SEMANTIC * loss_sem
+    loss_total = loss_off + loss_sem
 
     epoch_time = time.time() - start
     lr = optimizer.param_groups[0]['lr']
@@ -95,7 +95,7 @@ def validate(model, val_loader, epoch, mb):
 
     loss_off = np.mean(losses_dict['offset_loss'])
     loss_sem = np.mean(losses_dict['semantic_loss'])
-    loss_total = loss_off + LOSS_MULTIPLIER_SEMANTIC * loss_sem
+    loss_total = loss_off + loss_sem
 
     return loss_total, loss_off, loss_sem
 

@@ -3,9 +3,18 @@ from sklearn.model_selection import train_test_split
 import shutil
 import os 
 import sys
+import argparse
 cwd = os.getcwd()
 
-def split_dataset(data_dir="data/labeled/cloud", train_dir="data/labeled/trainset", test_dir="data/labeled/testset", test_size=0.15, random_state=42):
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
+    
+    # Define command-line arguments
+    parser.add_argument("--data_root", type=str, default='data/labeled/offset', help="root of the data directory you are splitting")
+
+    return parser.parse_args()
+
+def split_dataset(data_dir, train_dir, test_dir, test_size=0.15, random_state=42):
     """
     Splits the dataset in `data_dir` into training and testing sets and copies them into `train_dir` and `test_dir`.
 
@@ -34,10 +43,13 @@ def split_dataset(data_dir="data/labeled/cloud", train_dir="data/labeled/trainse
 
     print(f"Dataset split complete. Train set: {len(train_files)} files, Test set: {len(test_files)} files.")
 
-# Example usage
+if __name__ == "__main__":
+    args = parse_args()
 
-data_dir = os.path.join( cwd, 'data', 'labeled', 'cloud' )
-train_dir = os.path.join( cwd, 'data', 'labeled', 'trainset' )
-test_dir = os.path.join( cwd, 'data', 'labeled', 'testset' )
+    root = args.data_root
 
-split_dataset( data_dir, train_dir, test_dir )
+    data_dir = os.path.join( root, 'cloud' )
+    train_dir = os.path.join( root, 'trainset' )
+    test_dir = os.path.join( root, 'testset' )
+
+    split_dataset( data_dir, train_dir, test_dir )
