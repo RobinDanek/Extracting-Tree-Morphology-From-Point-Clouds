@@ -41,6 +41,7 @@ def log_parameters(args):
     logging.info(f"Cosine initial t: {args.t_initial}")
     logging.info(f"Progress bar disabled: {args.no_progress_bar}")
     logging.info(f"U-Net depth:  {args.blocks}")
+    logging.info(f"Feature channels: {args.dim_feat}")
     logging.info(f"Use features:  {args.features}")
     logging.info(f"use coords:  {args.coords}")
     logging.info(f"Noise Threshold: {args.noise_threshold}")
@@ -63,8 +64,9 @@ def parse_args():
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
     parser.add_argument("--blocks", type=int, default=3, help="The depth of the U-Net")
+    parser.add_argument("--dim_feat", type=int, default=1, help="The number of feature channels")
     parser.add_argument("--coords", type=bool, default=True, help="Whether to use coordinates for training")
-    parser.add_argument("--features", type=bool, default=False, help="Whether to use features for training")
+    parser.add_argument("--features", action="store_true", help="Whether to use features for training")
     parser.add_argument("--t_initial", type=int, default=50, help="The number of epochs after which the learning rate for cosine is reseted")
     parser.add_argument("--model_save_path", type=str, default=None, help="The path to which the model is saved")
     parser.add_argument("--noise_threshold", default=0.1, type=float, help="The threshold offset label length for training")
@@ -114,7 +116,7 @@ if __name__ == "__main__":
 
     # Model
     model = TreeLearn(
-        dim_feat=1, use_coords=args.coords, use_feats=args.features, num_blocks=args.blocks, voxel_size=args.voxel_size, 
+        dim_feat=args.dim_feat, use_coords=args.coords, use_feats=args.features, num_blocks=args.blocks, voxel_size=args.voxel_size, 
         spatial_shape=spatial_shape, loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult
         ).cuda()
 

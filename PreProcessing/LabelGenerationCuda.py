@@ -195,9 +195,9 @@ def label_clouds( cloudDir, cylinderDir, labelDir, batch_size=1024, clean_data=F
 
         # Add features to the labeled cloud
         if use_features:
-            output_data = add_features( output_data )
+            output_data = add_features( output_data, use_densities=False, use_curvatures=False, use_distances=False, use_verticalities=False )
         else: # Use dummy features for compatibility
-            output_data = np.concatenate( [output_data, np.ones((len(output_data), 1), dtype=int)], axis=1 )
+            output_data = np.concatenate( [output_data, np.ones((len(output_data), 4), dtype=int)], axis=1 )
 
         # Save the output
         fileName = os.path.basename( cloudList[i] ).split('.')[0]
