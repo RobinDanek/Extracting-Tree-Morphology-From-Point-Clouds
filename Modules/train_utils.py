@@ -12,7 +12,6 @@ from fastprogress.fastprogress import master_bar, progress_bar
 import fastprogress
 import logging
 
-from .TreeLearn import TreeLearn, LOSS_MULTIPLIER_SEMANTIC
 from Modules.Utils import cuda_cast, EarlyStopper
 
 

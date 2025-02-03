@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import os
-from Modules.TreeLearn.TreeLearn import TreeLearn
+from Modules.PointNet2.PointNet2 import PointNet2
 from Modules.train_utils import run_training
 from Modules.DataLoading.TreeSet import TreeSet, get_dataloader
 from Modules.Utils import EarlyStopper
@@ -34,13 +34,11 @@ def log_parameters(args):
     logging.info(f"Batch size: {args.batch_size}")
     logging.info(f"Epochs: {args.epochs}")
     logging.info(f"Learning rate: {args.lr}")
-    logging.info(f"Voxel size: {args.voxel_size}")
     logging.info(f"Early stopping patience: {args.patience_es}")
     logging.info(f"Warmup steps: {args.warmup_t}")
     logging.info(f"Minimum learning rate: {args.lr_min}")
     logging.info(f"Cosine initial t: {args.t_initial}")
     logging.info(f"Progress bar disabled: {args.no_progress_bar}")
-    logging.info(f"U-Net depth:  {args.blocks}")
     logging.info(f"Feature channels: {args.dim_feat}")
     logging.info(f"Use features:  {args.features}")
     logging.info(f"use coords:  {args.coords}")
@@ -58,12 +56,10 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=5, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=1000, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for the optimizer")
-    parser.add_argument("--voxel_size", type=float, default=0.1, help="Voxel size for the model")
     parser.add_argument("--patience_es", type=int, default=25, help="Patience for early stopping")
     parser.add_argument("--warmup_t", type=int, default=20, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
-    parser.add_argument("--blocks", type=int, default=3, help="The depth of the U-Net")
     parser.add_argument("--dim_feat", type=int, default=1, help="The number of feature channels")
     parser.add_argument("--coords", type=bool, default=True, help="Whether to use coordinates for training")
     parser.add_argument("--features", action="store_true", help="Whether to use features for training")
@@ -94,14 +90,13 @@ if __name__ == "__main__":
     # Train & Val loader
     train_root = os.path.join('data', 'labeled', 'offset', 'trainset')
     val_root = os.path.join('data', 'labeled', 'offset', 'testset')
+    if args.extra_noise:
+        train_root = os.path.join('data', 'labeled', 'noise', 'trainset')
+        val_root = os.path.join('data', 'labeled', 'noise', 'testset')
 
     # Use extra dataset for noise learning if prompted
-    if args.extra_noise:
-        trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold, noise_root=os.path.join('data', 'labeled', 'noise', 'trainset'))
-        valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold, noise_root=os.path.join('data', 'labeled', 'noise', 'testset'))
-    else:
-        trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
-        valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
+    trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
+    valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
 
     train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True)
     val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
@@ -115,10 +110,13 @@ if __name__ == "__main__":
     # spatial_shape=None
 
     # Model
-    model = TreeLearn(
-        dim_feat=args.dim_feat, use_coords=args.coords, use_feats=args.features, num_blocks=args.blocks, voxel_size=args.voxel_size, 
-        spatial_shape=spatial_shape, loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult
-        ).cuda()
+    model = PointNet2(
+        loss_multiplier_semantic=args.sem_loss_mult,
+        loss_multiplier_offset=args.off_loss_mult,
+        dim_feat=args.dim_feat,
+        use_coords=args.use_coords,
+        use_features=args.features
+    ).cuda()
 
     # Scheduler and optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
