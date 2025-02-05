@@ -151,7 +151,7 @@ def loadAndMakePrediction(modelPath, dim_feat=1, use_coords=True, use_feats=Fals
     points = torch.from_numpy( data[:, :3] ).float()
     labels = data[:, 3:6]
     # feats = torch.zeros(len(points)).float()
-    feats = torch.from_numpy(data[:, 7:]).float().unsqueeze(1)
+    feats = torch.from_numpy(data[:, 7:]).float()
     batch_ids = torch.zeros(len(points), dtype=torch.long)
     cyl_ids = data[:,6]
 

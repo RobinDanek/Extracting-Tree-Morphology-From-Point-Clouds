@@ -49,7 +49,7 @@ def log_parameters(args):
     logging.info(f"Model save path: {args.model_save_path}")
     logging.info(f"Used extra noise: {args.extra_noise}")
     logging.info(f"Semantic loss multiplier: {args.sem_loss_mult}")
-    logging.info(f"Offset loss multiplier: {args.sem_loss_mult}")
+    logging.info(f"Offset loss multiplier: {args.off_loss_mult}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -58,7 +58,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=5, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=1000, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for the optimizer")
-    parser.add_argument("--voxel_size", type=float, default=0.1, help="Voxel size for the model")
+    parser.add_argument("--voxel_size", type=float, default=0.02, help="Voxel size for the model")
     parser.add_argument("--patience_es", type=int, default=25, help="Patience for early stopping")
     parser.add_argument("--warmup_t", type=int, default=20, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
