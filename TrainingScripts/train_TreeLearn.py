@@ -103,8 +103,8 @@ if __name__ == "__main__":
         trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
         valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
 
-    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True)
-    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
+    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_voxel)
+    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
 
     # spatial shape =  [30m,30m,50m], depends on voxel size
     spatial_shape = [ 

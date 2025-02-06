@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from torch_points3d.applications.pointnet2 import PointNet2
+import functools
+# from torch_points3d.applications.pointnet2 import PointNet2
 from .blocks import *
 from Modules.Utils import cuda_cast
 from Modules.Loss import point_wise_loss
@@ -89,9 +90,9 @@ class PointNet2(nn.Module):
 
         return backbone_features
 
-    def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, **kwargs):
+    def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, masks_pad, **kwargs):
         loss_dict = dict()
-        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(), model_output['offset_predictions'][masks_off].float(), 
+        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'][masks_pad].float(), model_output['offset_predictions'][masks_pad][masks_off].float(), 
                                                             semantic_labels, offset_labels[masks_off])
         loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
         loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset

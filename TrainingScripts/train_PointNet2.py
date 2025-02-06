@@ -98,23 +98,15 @@ if __name__ == "__main__":
     trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
     valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
 
-    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True)
-    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
-
-    # spatial shape =  [30m,30m,50m], depends on voxel size
-    spatial_shape = [ 
-        np.round( args.spatial_shape[0]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[1]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[2]/args.voxel_size ).astype(int) 
-    ]
-    # spatial_shape=None
+    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_padded)
+    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_padded)
 
     # Model
     model = PointNet2(
         loss_multiplier_semantic=args.sem_loss_mult,
         loss_multiplier_offset=args.off_loss_mult,
         dim_feat=args.dim_feat,
-        use_coords=args.use_coords,
+        use_coords=args.coords,
         use_features=args.features
     ).cuda()
 

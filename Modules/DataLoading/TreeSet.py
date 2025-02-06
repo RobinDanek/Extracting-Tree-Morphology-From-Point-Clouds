@@ -96,7 +96,7 @@ class TreeSet(Dataset):
             "noise_features": noise_features,
         }
     
-    def collate_fn(self, batch):
+    def collate_fn_voxel(self, batch):
         """
         Custom collate function to prepare batches for the model.
 
@@ -168,9 +168,103 @@ class TreeSet(Dataset):
             collated_batch["noise_batch_ids"] = torch.cat(noise_batch_ids, 0)
 
         return collated_batch
+    
+    def collate_fn_padded(self, batch):
+        """
+        Custom collate function that pads point clouds in the batch to the largest cloud size.
+        This is needed for passing the clouds without voxelization while keeping their full size
+
+        Args:
+            batch (list): List of dictionaries, each containing point cloud data and labels.
+
+        Returns:
+            dict: Batched data with padding and masks.
+        """
+        xyzs = []
+        feats = []
+        batch_ids = []
+        semantic_labels = []
+        offset_labels = []
+        offset_masks = []
+        masks_pad = []  # <-- Mask for padded points
+        noise_masks_pad = []
+        noise_xyzs, noise_feats, noise_batch_ids = [], [], []
+
+        total_points_num = 0
+        batch_id = 0
+
+        # Determine max cloud size in the batch
+        max_num_points = max(len(data["points"]) for data in batch)
+
+        for data in batch:
+            points = data["points"]
+            features = data["features"]
+            offsets = data["offsets"]
+            semantic_label = data["semantic_label"]
+            offset_mask = data["offset_mask"]
+
+            num_points = len(points)
+
+            # Pad the clouds to max_num_points
+            pad_size = max_num_points - num_points
+
+            xyzs.append(torch.cat([points, torch.zeros((pad_size, 3), device=points.device)], dim=0))
+            feats.append(torch.cat([features, torch.zeros((pad_size, features.shape[1]), device=features.device)], dim=0))
+            batch_ids.append(torch.full((max_num_points,), batch_id, dtype=torch.long, device=points.device))
+            # The labels and offset masks are not padded, as they are only used during loss calculation. Before the loss calculation the padded points are filtered out,
+            # so that no padded labels are needed for them
+            semantic_labels.append(semantic_label)
+            offset_labels.append(offsets)
+            offset_masks.append(offset_mask) # The offset mask remains the same as before, since the padded points are filtered out using masks_pad, after which masks_off are applied
+
+            # Create padding mask (True for real points, False for padded points)
+            masks_pad.append(torch.cat([torch.ones(num_points, dtype=torch.bool, device=points.device),
+                                        torch.zeros(pad_size, dtype=torch.bool, device=points.device)], dim=0))
+
+            if data["noise_points"] is not None:
+                num_noise_points = len(data["noise_points"])
+                noise_pad_size = max_num_points - num_noise_points
+
+                noise_xyzs.append(torch.cat([data["noise_points"], torch.zeros((noise_pad_size, 3), device=data["noise_points"].device)], dim=0))
+                noise_feats.append(torch.cat([data["noise_features"], torch.zeros((noise_pad_size, data["noise_features"].shape[1]), device=data["noise_features"].device)], dim=0))
+                noise_batch_ids.append(torch.full((max_num_points,), batch_id, dtype=torch.long, device=data["noise_points"].device))
+
+                noise_masks_pad.append( torch.cat([torch.ones(num_noise_points, dtype=torch.bool, device=data["noise_points"].device),
+                                                   torch.zeros(noise_pad_size, dtype=torch.bool, device=data["noise_points"].device)], dim=0) )
+
+            total_points_num += num_points
+            batch_id += 1
+
+        # Combine into tensors
+        xyzs = torch.stack(xyzs)
+        feats = torch.stack(feats)
+        batch_ids = torch.stack(batch_ids)
+        semantic_labels = torch.cat(semantic_labels, 0).long()
+        offset_labels = torch.cat(offset_labels, 0).float()
+        offset_masks = torch.cat(offset_masks, 0).bool()
+        masks_pad = torch.stack(masks_pad)  # <-- Convert list to tensor
+
+        collated_batch = {
+            "coords": xyzs,
+            "feats": feats,
+            "batch_ids": batch_ids,
+            "semantic_labels": semantic_labels,
+            "offset_labels": offset_labels,
+            "masks_off": offset_masks,
+            "masks_pad": masks_pad,  # <-- Properly created padding mask
+            "batch_size": batch_id,
+        }
+
+        if noise_xyzs:
+            collated_batch["noise_coords"] = torch.stack(noise_xyzs)
+            collated_batch["noise_feats"] = torch.stack(noise_feats)
+            collated_batch["noise_batch_ids"] = torch.stack(noise_batch_ids)
+            collated_batch["noise_masks_pad"] = torch.stack(noise_masks_pad)
+
+        return collated_batch
 
 
-def get_dataloader(dataset, batch_size, num_workers, training):
+def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
     """
     Create a DataLoader for the given dataset.
 
@@ -189,5 +283,5 @@ def get_dataloader(dataset, batch_size, num_workers, training):
         shuffle=training,  # Shuffle data if it's a training set
         num_workers=num_workers,
         pin_memory=True,  # Optimize memory transfer between CPU and GPU
-        collate_fn=dataset.collate_fn
+        collate_fn=collate_fn
     )

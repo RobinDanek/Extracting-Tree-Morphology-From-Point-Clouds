@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pointnet2_utils import *
+from .pointnet2_utils import *
 
 class MLP(nn.Sequential):
 
@@ -59,7 +59,7 @@ class PointNetSetAbstraction(nn.Module):
         B, N, _ = xyz.shape
 
         # Step 1: Farthest Point Sampling (FPS)
-        fps_idx = furthest_point_sample(xyz, self.npoint)  # [B, npoint]
+        fps_idx = farthest_point_sample(xyz, self.npoint)  # [B, npoint]
         new_xyz = gather_operation(xyz.transpose(1, 2), fps_idx).transpose(1, 2)  # [B, npoint, 3]
 
         # Step 2: Ball Query to find neighbors
@@ -99,12 +99,12 @@ class PointNetFeaturePropagation(nn.Module):
         Returns:
         - new_features: [B, N, C_out] - Upsampled features
         """
-        dist, idx = pointnet2_utils.three_nn(xyz1, xyz2)  # Find 3 nearest neighbors
+        dist, idx = three_nn(xyz1, xyz2)  # Find 3 nearest neighbors
         dist = torch.clamp(dist, min=1e-10)  # Avoid division by zero
         norm = torch.sum(1.0 / dist, dim=-1, keepdim=True)
         weight = (1.0 / dist) / norm  # Compute interpolation weights
 
-        interpolated_features = pointnet2_utils.three_interpolate(features2.transpose(1, 2), idx, weight)
+        interpolated_features = three_interpolate(features2.transpose(1, 2), idx, weight)
         interpolated_features = interpolated_features.transpose(1, 2)  # [B, N, C2]
 
         if features1 is not None:
