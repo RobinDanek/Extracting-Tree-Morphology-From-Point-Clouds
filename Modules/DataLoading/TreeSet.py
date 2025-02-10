@@ -236,11 +236,11 @@ class TreeSet(Dataset):
             batch_id += 1
 
         # Combine into tensors
-        xyzs = torch.stack(xyzs)
-        feats = torch.stack(feats)
+        xyzs = torch.stack(xyzs).transpose(-1,-2)
+        feats = torch.stack(feats).transpose(-1,-2)
         batch_ids = torch.stack(batch_ids)
         semantic_labels = torch.cat(semantic_labels, 0).long()
-        offset_labels = torch.cat(offset_labels, 0).float()
+        offset_labels = torch.cat(offset_labels, 0).float().transpose(-1,-2)
         offset_masks = torch.cat(offset_masks, 0).bool()
         masks_pad = torch.stack(masks_pad)  # <-- Convert list to tensor
 

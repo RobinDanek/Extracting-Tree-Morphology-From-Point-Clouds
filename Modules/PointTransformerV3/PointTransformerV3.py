@@ -8,6 +8,10 @@ import spconv.pytorch as spconv
 import torch_scatter
 from timm.models.layers import DropPath
 from collections import OrderedDict
+import functools
+
+from Modules.Loss import point_wise_loss
+from Modules.Utils import cuda_cast
 
 try:
     import flash_attn
@@ -22,7 +26,7 @@ class PointTransformerWithHeads(nn.Module):
         self, 
         dim_feat=4, 
         use_feats=False, 
-        voxel_size=0.1,
+        voxel_size=0.02,
         loss_multiplier_semantic=1,
         loss_multiplier_offset=1,
         **kwargs
@@ -36,10 +40,12 @@ class PointTransformerWithHeads(nn.Module):
         self.backbone = PointTransformerV3(
             in_channels = dim_feat
         )
+
+        norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
         
         # head
-        self.semantic_linear = MLP(32, 2, norm_fn=norm_fn, num_layers=2)
-        self.offset_linear = MLP(32, 3, norm_fn=norm_fn, num_layers=2)
+        self.semantic_linear = MLP_Head(32, 2, norm_fn=norm_fn, num_layers=2)
+        self.offset_linear = MLP_Head(32, 3, norm_fn=norm_fn, num_layers=2)
         self.init_weights()
 
     def init_weights(self):
@@ -50,17 +56,54 @@ class PointTransformerWithHeads(nn.Module):
             elif isinstance(m, MLP):
                 m.init_weights()
 
-    def forward(self, batch, **kwargs):
-        return
+    def forward(self, batch, return_loss, **kwargs):
 
+        # Extract features and points and put them into point_dict
+        feats = batch["feats"]
+        if not self.use_feats:
+            feats = torch.ones_like(feats)  # Replace features with ones if use_feats is False
+
+        point_dict = {
+            "coords": batch["coords"],
+            "feat": feats,
+            "grid_size": self.voxel_size
+        }
+
+        output = self.forward_backbone( point_dict )
+        output = self.forward_head( output )
+
+        if return_loss:
+            output = self.get_loss(model_output=output, **batch)
+
+        return output
+
+    @cuda_cast
     def forward_backbone(self, point_dict, **kwargs):
-        return
 
-    def forward_head(self, backbone_feats, **kwargs):
-        return
+        output = self.backbone( point_dict )
 
-    def get_loss(self, output, **kwargs):
-        return
+        return output
+
+    def forward_head(self, backbone_output, **kwargs):
+        output = dict()
+        backbone_feats = backbone_output["feat"] # Expected shape: B x N x 32
+        output['backbone_feats'] = backbone_feats
+        backbone_feats = backbone_feats.permute(0, 2, 1)  # Convert B x N x C -> B x C x N
+
+        output['semantic_prediction_logits'] = self.semantic_linear(backbone_feats)  # (B, 2, N)
+        output['offset_predictions'] = self.offset_linear(backbone_feats)  # (B, 3, N)
+
+        return output
+
+    def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, **kwargs):
+        loss_dict = dict()
+        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(), model_output['offset_predictions'][masks_off].float(), 
+                                                            semantic_labels, offset_labels[masks_off])
+        loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
+        loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
+
+        loss = sum(_value for _value in loss_dict.values())
+        return loss, loss_dict
 
 # The original Transformer model
 
