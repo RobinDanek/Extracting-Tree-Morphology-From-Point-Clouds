@@ -43,7 +43,6 @@ def log_parameters(args):
     logging.info(f"Use features:  {args.features}")
     logging.info(f"use coords:  {args.coords}")
     logging.info(f"Noise Threshold: {args.noise_threshold}")
-    logging.info(f"Spatial Shape: {args.spatial_shape}")
     logging.info(f"Model save path: {args.model_save_path}")
     logging.info(f"Used extra noise: {args.extra_noise}")
     logging.info(f"Semantic loss multiplier: {args.sem_loss_mult}")
@@ -66,7 +65,6 @@ def parse_args():
     parser.add_argument("--t_initial", type=int, default=50, help="The number of epochs after which the learning rate for cosine is reseted")
     parser.add_argument("--model_save_path", type=str, default=None, help="The path to which the model is saved")
     parser.add_argument("--noise_threshold", default=0.1, type=float, help="The threshold offset label length for training")
-    parser.add_argument("--spatial_shape", type=int, nargs=3, default=[30,30,50], help="The spatial extend for voxelized clouds. Choose it large enough for the network depth.")
     parser.add_argument("--verbose", type=bool, default=False, help="Whether to print messages during training")
     parser.add_argument("--extra_noise", action="store_true", help="Use extra dataset for noise prediction")
     parser.add_argument("--sem_loss_mult", type=float, default=1.0, help="Weighting factor of semantic loss")
@@ -98,23 +96,15 @@ if __name__ == "__main__":
     trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
     valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
 
-    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True)
-    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False)
-
-    # spatial shape =  [30m,30m,50m], depends on voxel size
-    spatial_shape = [ 
-        np.round( args.spatial_shape[0]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[1]/args.voxel_size ).astype(int), 
-        np.round( args.spatial_shape[2]/args.voxel_size ).astype(int) 
-    ]
-    # spatial_shape=None
+    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_padded)
+    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_padded)
 
     # Model
     model = PointNet2(
         loss_multiplier_semantic=args.sem_loss_mult,
         loss_multiplier_offset=args.off_loss_mult,
         dim_feat=args.dim_feat,
-        use_coords=args.use_coords,
+        use_coords=args.coords,
         use_features=args.features
     ).cuda()
 

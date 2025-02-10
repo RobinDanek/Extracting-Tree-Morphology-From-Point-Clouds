@@ -34,7 +34,7 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
 
     # Create plot path
     if save_plots:
-        plot_dir = create_model_evaluation_path( modelPath )
+        plot_dir = create_model_evaluation_path( modelPath, modelPath_noise )
     else:
         save_path = None
 
@@ -105,13 +105,14 @@ def testModel(modelPath, dim_feat=1, use_coords=True, use_feats=False, num_block
                 save_path=save_path
             )
 
-def create_model_evaluation_path(modelPath):
+def create_model_evaluation_path(modelPath, modelPath_noise):
     # Extract model name (file name without extension)
     model_name = os.path.splitext(os.path.basename(modelPath))[0]
+    model_name_noise = os.path.splitext(os.path.basename(modelPath_noise))[0]
 
     # Construct the new path: one directory up -> plots/ModelEvaluation/model_name
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(modelPath)))  # Go one directory up
-    eval_dir = os.path.join(base_dir, "plots", "ModelEvaluation", model_name)
+    eval_dir = os.path.join(base_dir, "plots", "ModelEvaluation", model_name + '_' + model_name_noise)
 
     # Create the directory if it doesn't exist
     os.makedirs(eval_dir, exist_ok=True)

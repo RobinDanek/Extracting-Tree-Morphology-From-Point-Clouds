@@ -1,0 +1,340 @@
+2025-02-06 13:42:01,420 - Training started with the following parameters:
+2025-02-06 13:42:01,420 - Batch size: 5
+2025-02-06 13:42:01,420 - Epochs: 1000
+2025-02-06 13:42:01,420 - Learning rate: 0.01
+2025-02-06 13:42:01,420 - Early stopping patience: 25
+2025-02-06 13:42:01,420 - Warmup steps: 20
+2025-02-06 13:42:01,420 - Minimum learning rate: 0.0001
+2025-02-06 13:42:01,420 - Cosine initial t: 50
+2025-02-06 13:42:01,421 - Progress bar disabled: False
+2025-02-06 13:42:01,421 - Feature channels: 4
+2025-02-06 13:42:01,421 - Use features:  True
+2025-02-06 13:42:01,421 - use coords:  True
+2025-02-06 13:42:01,421 - Noise Threshold: 0.1
+2025-02-06 13:42:01,421 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 13:42:01,421 - Used extra noise: False
+2025-02-06 13:42:01,421 - Semantic loss multiplier: 0.0
+2025-02-06 13:42:01,421 - Offset loss multiplier: 0.0
+2025-02-06 13:43:51,164 - Training started with the following parameters:
+2025-02-06 13:43:51,164 - Batch size: 5
+2025-02-06 13:43:51,164 - Epochs: 1000
+2025-02-06 13:43:51,164 - Learning rate: 0.01
+2025-02-06 13:43:51,164 - Early stopping patience: 25
+2025-02-06 13:43:51,164 - Warmup steps: 20
+2025-02-06 13:43:51,164 - Minimum learning rate: 0.0001
+2025-02-06 13:43:51,164 - Cosine initial t: 50
+2025-02-06 13:43:51,164 - Progress bar disabled: False
+2025-02-06 13:43:51,164 - Feature channels: 4
+2025-02-06 13:43:51,164 - Use features:  True
+2025-02-06 13:43:51,164 - use coords:  True
+2025-02-06 13:43:51,164 - Noise Threshold: 0.1
+2025-02-06 13:43:51,164 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 13:43:51,165 - Used extra noise: False
+2025-02-06 13:43:51,165 - Semantic loss multiplier: 0.0
+2025-02-06 13:43:51,165 - Offset loss multiplier: 0.0
+2025-02-06 13:52:57,149 - Training started with the following parameters:
+2025-02-06 13:52:57,149 - Batch size: 5
+2025-02-06 13:52:57,149 - Epochs: 1000
+2025-02-06 13:52:57,149 - Learning rate: 0.01
+2025-02-06 13:52:57,149 - Early stopping patience: 25
+2025-02-06 13:52:57,149 - Warmup steps: 20
+2025-02-06 13:52:57,149 - Minimum learning rate: 0.0001
+2025-02-06 13:52:57,149 - Cosine initial t: 50
+2025-02-06 13:52:57,149 - Progress bar disabled: False
+2025-02-06 13:52:57,149 - Feature channels: 4
+2025-02-06 13:52:57,149 - Use features:  True
+2025-02-06 13:52:57,149 - use coords:  True
+2025-02-06 13:52:57,149 - Noise Threshold: 0.1
+2025-02-06 13:52:57,149 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 13:52:57,149 - Used extra noise: False
+2025-02-06 13:52:57,149 - Semantic loss multiplier: 0.0
+2025-02-06 13:52:57,149 - Offset loss multiplier: 0.0
+2025-02-06 14:00:12,333 - Training started with the following parameters:
+2025-02-06 14:00:12,333 - Batch size: 5
+2025-02-06 14:00:12,333 - Epochs: 1000
+2025-02-06 14:00:12,333 - Learning rate: 0.01
+2025-02-06 14:00:12,333 - Early stopping patience: 25
+2025-02-06 14:00:12,333 - Warmup steps: 20
+2025-02-06 14:00:12,333 - Minimum learning rate: 0.0001
+2025-02-06 14:00:12,333 - Cosine initial t: 50
+2025-02-06 14:00:12,333 - Progress bar disabled: False
+2025-02-06 14:00:12,333 - Feature channels: 4
+2025-02-06 14:00:12,333 - Use features:  True
+2025-02-06 14:00:12,333 - use coords:  True
+2025-02-06 14:00:12,333 - Noise Threshold: 0.1
+2025-02-06 14:00:12,333 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 14:00:12,333 - Used extra noise: False
+2025-02-06 14:00:12,333 - Semantic loss multiplier: 0.0
+2025-02-06 14:00:12,333 - Offset loss multiplier: 0.0
+2025-02-06 14:02:01,161 - Training started with the following parameters:
+2025-02-06 14:02:01,161 - Batch size: 5
+2025-02-06 14:02:01,161 - Epochs: 1000
+2025-02-06 14:02:01,161 - Learning rate: 0.01
+2025-02-06 14:02:01,161 - Early stopping patience: 25
+2025-02-06 14:02:01,161 - Warmup steps: 20
+2025-02-06 14:02:01,161 - Minimum learning rate: 0.0001
+2025-02-06 14:02:01,161 - Cosine initial t: 50
+2025-02-06 14:02:01,161 - Progress bar disabled: False
+2025-02-06 14:02:01,161 - Feature channels: 4
+2025-02-06 14:02:01,162 - Use features:  True
+2025-02-06 14:02:01,162 - use coords:  True
+2025-02-06 14:02:01,162 - Noise Threshold: 0.1
+2025-02-06 14:02:01,162 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 14:02:01,162 - Used extra noise: False
+2025-02-06 14:02:01,162 - Semantic loss multiplier: 0.0
+2025-02-06 14:02:01,162 - Offset loss multiplier: 0.0
+2025-02-06 14:54:53,267 - Training started with the following parameters:
+2025-02-06 14:54:53,267 - Batch size: 5
+2025-02-06 14:54:53,267 - Epochs: 1000
+2025-02-06 14:54:53,267 - Learning rate: 0.01
+2025-02-06 14:54:53,267 - Early stopping patience: 25
+2025-02-06 14:54:53,267 - Warmup steps: 20
+2025-02-06 14:54:53,267 - Minimum learning rate: 0.0001
+2025-02-06 14:54:53,267 - Cosine initial t: 50
+2025-02-06 14:54:53,267 - Progress bar disabled: False
+2025-02-06 14:54:53,267 - Feature channels: 4
+2025-02-06 14:54:53,267 - Use features:  True
+2025-02-06 14:54:53,267 - use coords:  True
+2025-02-06 14:54:53,267 - Noise Threshold: 0.1
+2025-02-06 14:54:53,267 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 14:54:53,267 - Used extra noise: False
+2025-02-06 14:54:53,267 - Semantic loss multiplier: 0.0
+2025-02-06 14:54:53,267 - Offset loss multiplier: 0.0
+2025-02-06 14:59:25,864 - Training started with the following parameters:
+2025-02-06 14:59:25,864 - Batch size: 5
+2025-02-06 14:59:25,864 - Epochs: 1000
+2025-02-06 14:59:25,864 - Learning rate: 0.01
+2025-02-06 14:59:25,864 - Early stopping patience: 25
+2025-02-06 14:59:25,864 - Warmup steps: 20
+2025-02-06 14:59:25,864 - Minimum learning rate: 0.0001
+2025-02-06 14:59:25,864 - Cosine initial t: 50
+2025-02-06 14:59:25,864 - Progress bar disabled: False
+2025-02-06 14:59:25,864 - Feature channels: 4
+2025-02-06 14:59:25,864 - Use features:  True
+2025-02-06 14:59:25,864 - use coords:  True
+2025-02-06 14:59:25,864 - Noise Threshold: 0.1
+2025-02-06 14:59:25,864 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 14:59:25,864 - Used extra noise: False
+2025-02-06 14:59:25,864 - Semantic loss multiplier: 0.0
+2025-02-06 14:59:25,864 - Offset loss multiplier: 0.0
+2025-02-06 15:01:53,573 - Training started with the following parameters:
+2025-02-06 15:01:53,573 - Batch size: 5
+2025-02-06 15:01:53,573 - Epochs: 1000
+2025-02-06 15:01:53,574 - Learning rate: 0.01
+2025-02-06 15:01:53,574 - Early stopping patience: 25
+2025-02-06 15:01:53,574 - Warmup steps: 20
+2025-02-06 15:01:53,574 - Minimum learning rate: 0.0001
+2025-02-06 15:01:53,574 - Cosine initial t: 50
+2025-02-06 15:01:53,574 - Progress bar disabled: False
+2025-02-06 15:01:53,574 - Feature channels: 4
+2025-02-06 15:01:53,574 - Use features:  True
+2025-02-06 15:01:53,574 - use coords:  True
+2025-02-06 15:01:53,574 - Noise Threshold: 0.1
+2025-02-06 15:01:53,574 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:01:53,574 - Used extra noise: False
+2025-02-06 15:01:53,574 - Semantic loss multiplier: 0.0
+2025-02-06 15:01:53,574 - Offset loss multiplier: 0.0
+2025-02-06 15:03:04,919 - Training started with the following parameters:
+2025-02-06 15:03:04,919 - Batch size: 5
+2025-02-06 15:03:04,919 - Epochs: 1000
+2025-02-06 15:03:04,919 - Learning rate: 0.01
+2025-02-06 15:03:04,919 - Early stopping patience: 25
+2025-02-06 15:03:04,919 - Warmup steps: 20
+2025-02-06 15:03:04,919 - Minimum learning rate: 0.0001
+2025-02-06 15:03:04,919 - Cosine initial t: 50
+2025-02-06 15:03:04,919 - Progress bar disabled: False
+2025-02-06 15:03:04,919 - Feature channels: 4
+2025-02-06 15:03:04,919 - Use features:  True
+2025-02-06 15:03:04,919 - use coords:  True
+2025-02-06 15:03:04,919 - Noise Threshold: 0.1
+2025-02-06 15:03:04,919 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:03:04,919 - Used extra noise: False
+2025-02-06 15:03:04,919 - Semantic loss multiplier: 0.0
+2025-02-06 15:03:04,919 - Offset loss multiplier: 0.0
+2025-02-06 15:04:38,773 - Training started with the following parameters:
+2025-02-06 15:04:38,773 - Batch size: 5
+2025-02-06 15:04:38,773 - Epochs: 1000
+2025-02-06 15:04:38,773 - Learning rate: 0.01
+2025-02-06 15:04:38,773 - Early stopping patience: 25
+2025-02-06 15:04:38,773 - Warmup steps: 20
+2025-02-06 15:04:38,773 - Minimum learning rate: 0.0001
+2025-02-06 15:04:38,773 - Cosine initial t: 50
+2025-02-06 15:04:38,773 - Progress bar disabled: False
+2025-02-06 15:04:38,773 - Feature channels: 4
+2025-02-06 15:04:38,773 - Use features:  True
+2025-02-06 15:04:38,773 - use coords:  True
+2025-02-06 15:04:38,773 - Noise Threshold: 0.1
+2025-02-06 15:04:38,773 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:04:38,773 - Used extra noise: False
+2025-02-06 15:04:38,773 - Semantic loss multiplier: 0.0
+2025-02-06 15:04:38,773 - Offset loss multiplier: 0.0
+2025-02-06 15:05:35,943 - Training started with the following parameters:
+2025-02-06 15:05:35,943 - Batch size: 5
+2025-02-06 15:05:35,943 - Epochs: 1000
+2025-02-06 15:05:35,943 - Learning rate: 0.01
+2025-02-06 15:05:35,945 - Early stopping patience: 25
+2025-02-06 15:05:35,945 - Warmup steps: 20
+2025-02-06 15:05:35,945 - Minimum learning rate: 0.0001
+2025-02-06 15:05:35,945 - Cosine initial t: 50
+2025-02-06 15:05:35,945 - Progress bar disabled: False
+2025-02-06 15:05:35,945 - Feature channels: 4
+2025-02-06 15:05:35,945 - Use features:  True
+2025-02-06 15:05:35,945 - use coords:  True
+2025-02-06 15:05:35,945 - Noise Threshold: 0.1
+2025-02-06 15:05:35,945 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:05:35,945 - Used extra noise: False
+2025-02-06 15:05:35,945 - Semantic loss multiplier: 0.0
+2025-02-06 15:05:35,945 - Offset loss multiplier: 0.0
+2025-02-06 15:33:26,971 - Training started with the following parameters:
+2025-02-06 15:33:26,971 - Batch size: 5
+2025-02-06 15:33:26,971 - Epochs: 1000
+2025-02-06 15:33:26,971 - Learning rate: 0.01
+2025-02-06 15:33:26,971 - Early stopping patience: 25
+2025-02-06 15:33:26,971 - Warmup steps: 20
+2025-02-06 15:33:26,971 - Minimum learning rate: 0.0001
+2025-02-06 15:33:26,971 - Cosine initial t: 50
+2025-02-06 15:33:26,971 - Progress bar disabled: False
+2025-02-06 15:33:26,971 - Feature channels: 4
+2025-02-06 15:33:26,971 - Use features:  True
+2025-02-06 15:33:26,971 - use coords:  True
+2025-02-06 15:33:26,971 - Noise Threshold: 0.1
+2025-02-06 15:33:26,971 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:33:26,971 - Used extra noise: False
+2025-02-06 15:33:26,971 - Semantic loss multiplier: 0.0
+2025-02-06 15:33:26,971 - Offset loss multiplier: 0.0
+2025-02-06 15:35:16,035 - Training started with the following parameters:
+2025-02-06 15:35:16,035 - Batch size: 5
+2025-02-06 15:35:16,035 - Epochs: 1000
+2025-02-06 15:35:16,035 - Learning rate: 0.01
+2025-02-06 15:35:16,035 - Early stopping patience: 25
+2025-02-06 15:35:16,035 - Warmup steps: 20
+2025-02-06 15:35:16,035 - Minimum learning rate: 0.0001
+2025-02-06 15:35:16,035 - Cosine initial t: 50
+2025-02-06 15:35:16,035 - Progress bar disabled: False
+2025-02-06 15:35:16,035 - Feature channels: 4
+2025-02-06 15:35:16,035 - Use features:  True
+2025-02-06 15:35:16,035 - use coords:  True
+2025-02-06 15:35:16,035 - Noise Threshold: 0.1
+2025-02-06 15:35:16,035 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:35:16,035 - Used extra noise: False
+2025-02-06 15:35:16,035 - Semantic loss multiplier: 0.0
+2025-02-06 15:35:16,036 - Offset loss multiplier: 0.0
+2025-02-06 15:36:52,164 - Training started with the following parameters:
+2025-02-06 15:36:52,164 - Batch size: 5
+2025-02-06 15:36:52,164 - Epochs: 1000
+2025-02-06 15:36:52,164 - Learning rate: 0.01
+2025-02-06 15:36:52,164 - Early stopping patience: 25
+2025-02-06 15:36:52,164 - Warmup steps: 20
+2025-02-06 15:36:52,164 - Minimum learning rate: 0.0001
+2025-02-06 15:36:52,164 - Cosine initial t: 50
+2025-02-06 15:36:52,164 - Progress bar disabled: False
+2025-02-06 15:36:52,164 - Feature channels: 4
+2025-02-06 15:36:52,164 - Use features:  True
+2025-02-06 15:36:52,164 - use coords:  True
+2025-02-06 15:36:52,164 - Noise Threshold: 0.1
+2025-02-06 15:36:52,164 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:36:52,164 - Used extra noise: False
+2025-02-06 15:36:52,164 - Semantic loss multiplier: 0.0
+2025-02-06 15:36:52,164 - Offset loss multiplier: 0.0
+2025-02-06 15:38:48,064 - Training started with the following parameters:
+2025-02-06 15:38:48,064 - Batch size: 5
+2025-02-06 15:38:48,064 - Epochs: 1000
+2025-02-06 15:38:48,064 - Learning rate: 0.01
+2025-02-06 15:38:48,064 - Early stopping patience: 25
+2025-02-06 15:38:48,064 - Warmup steps: 20
+2025-02-06 15:38:48,064 - Minimum learning rate: 0.0001
+2025-02-06 15:38:48,064 - Cosine initial t: 50
+2025-02-06 15:38:48,064 - Progress bar disabled: False
+2025-02-06 15:38:48,064 - Feature channels: 4
+2025-02-06 15:38:48,064 - Use features:  True
+2025-02-06 15:38:48,064 - use coords:  True
+2025-02-06 15:38:48,064 - Noise Threshold: 0.1
+2025-02-06 15:38:48,064 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:38:48,064 - Used extra noise: False
+2025-02-06 15:38:48,064 - Semantic loss multiplier: 0.0
+2025-02-06 15:38:48,064 - Offset loss multiplier: 0.0
+2025-02-06 15:47:18,727 - Training started with the following parameters:
+2025-02-06 15:47:18,727 - Batch size: 5
+2025-02-06 15:47:18,727 - Epochs: 1000
+2025-02-06 15:47:18,727 - Learning rate: 0.01
+2025-02-06 15:47:18,727 - Early stopping patience: 25
+2025-02-06 15:47:18,727 - Warmup steps: 20
+2025-02-06 15:47:18,727 - Minimum learning rate: 0.0001
+2025-02-06 15:47:18,727 - Cosine initial t: 50
+2025-02-06 15:47:18,727 - Progress bar disabled: False
+2025-02-06 15:47:18,727 - Feature channels: 4
+2025-02-06 15:47:18,727 - Use features:  True
+2025-02-06 15:47:18,727 - use coords:  True
+2025-02-06 15:47:18,727 - Noise Threshold: 0.1
+2025-02-06 15:47:18,727 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:47:18,727 - Used extra noise: False
+2025-02-06 15:47:18,727 - Semantic loss multiplier: 0.0
+2025-02-06 15:47:18,727 - Offset loss multiplier: 0.0
+2025-02-06 15:48:04,648 - Training started with the following parameters:
+2025-02-06 15:48:04,648 - Batch size: 5
+2025-02-06 15:48:04,648 - Epochs: 1000
+2025-02-06 15:48:04,648 - Learning rate: 0.01
+2025-02-06 15:48:04,648 - Early stopping patience: 25
+2025-02-06 15:48:04,648 - Warmup steps: 20
+2025-02-06 15:48:04,648 - Minimum learning rate: 0.0001
+2025-02-06 15:48:04,648 - Cosine initial t: 50
+2025-02-06 15:48:04,648 - Progress bar disabled: False
+2025-02-06 15:48:04,648 - Feature channels: 4
+2025-02-06 15:48:04,648 - Use features:  True
+2025-02-06 15:48:04,648 - use coords:  True
+2025-02-06 15:48:04,648 - Noise Threshold: 0.1
+2025-02-06 15:48:04,648 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:48:04,648 - Used extra noise: False
+2025-02-06 15:48:04,648 - Semantic loss multiplier: 0.0
+2025-02-06 15:48:04,648 - Offset loss multiplier: 0.0
+2025-02-06 15:57:45,047 - Training started with the following parameters:
+2025-02-06 15:57:45,047 - Batch size: 5
+2025-02-06 15:57:45,047 - Epochs: 1000
+2025-02-06 15:57:45,047 - Learning rate: 0.01
+2025-02-06 15:57:45,047 - Early stopping patience: 25
+2025-02-06 15:57:45,047 - Warmup steps: 20
+2025-02-06 15:57:45,047 - Minimum learning rate: 0.0001
+2025-02-06 15:57:45,047 - Cosine initial t: 50
+2025-02-06 15:57:45,047 - Progress bar disabled: False
+2025-02-06 15:57:45,047 - Feature channels: 4
+2025-02-06 15:57:45,047 - Use features:  True
+2025-02-06 15:57:45,047 - use coords:  True
+2025-02-06 15:57:45,047 - Noise Threshold: 0.1
+2025-02-06 15:57:45,047 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 15:57:45,047 - Used extra noise: False
+2025-02-06 15:57:45,047 - Semantic loss multiplier: 0.0
+2025-02-06 15:57:45,048 - Offset loss multiplier: 0.0
+2025-02-06 16:00:24,727 - Training started with the following parameters:
+2025-02-06 16:00:24,727 - Batch size: 5
+2025-02-06 16:00:24,727 - Epochs: 1000
+2025-02-06 16:00:24,728 - Learning rate: 0.01
+2025-02-06 16:00:24,728 - Early stopping patience: 25
+2025-02-06 16:00:24,728 - Warmup steps: 20
+2025-02-06 16:00:24,728 - Minimum learning rate: 0.0001
+2025-02-06 16:00:24,728 - Cosine initial t: 50
+2025-02-06 16:00:24,728 - Progress bar disabled: False
+2025-02-06 16:00:24,728 - Feature channels: 4
+2025-02-06 16:00:24,728 - Use features:  True
+2025-02-06 16:00:24,728 - use coords:  True
+2025-02-06 16:00:24,728 - Noise Threshold: 0.1
+2025-02-06 16:00:24,728 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 16:00:24,728 - Used extra noise: False
+2025-02-06 16:00:24,728 - Semantic loss multiplier: 0.0
+2025-02-06 16:00:24,728 - Offset loss multiplier: 0.0
+2025-02-06 16:02:09,125 - Training started with the following parameters:
+2025-02-06 16:02:09,125 - Batch size: 5
+2025-02-06 16:02:09,125 - Epochs: 1000
+2025-02-06 16:02:09,125 - Learning rate: 0.01
+2025-02-06 16:02:09,125 - Early stopping patience: 25
+2025-02-06 16:02:09,125 - Warmup steps: 20
+2025-02-06 16:02:09,125 - Minimum learning rate: 0.0001
+2025-02-06 16:02:09,125 - Cosine initial t: 50
+2025-02-06 16:02:09,125 - Progress bar disabled: False
+2025-02-06 16:02:09,125 - Feature channels: 4
+2025-02-06 16:02:09,125 - Use features:  True
+2025-02-06 16:02:09,125 - use coords:  True
+2025-02-06 16:02:09,125 - Noise Threshold: 0.1
+2025-02-06 16:02:09,125 - Model save path: ModelSaves/PointNet2/PointNet2_O_FHN.pt
+2025-02-06 16:02:09,125 - Used extra noise: False
+2025-02-06 16:02:09,125 - Semantic loss multiplier: 0.0
+2025-02-06 16:02:09,125 - Offset loss multiplier: 0.0

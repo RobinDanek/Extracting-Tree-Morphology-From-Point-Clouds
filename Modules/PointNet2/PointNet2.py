@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from torch_points3d.applications.pointnet2 import PointNet2
+import functools
+# from torch_points3d.applications.pointnet2 import PointNet2
 from .blocks import *
 from Modules.Utils import cuda_cast
 from Modules.Loss import point_wise_loss
@@ -31,14 +32,14 @@ class PointNet2(nn.Module):
             input_dim += 3
         if use_features:
             input_dim += dim_feat
-        self.sa1 = PointNetSetAbstraction(512, 0.2, 32, input_dim, [64, 64, 128])
-        self.sa2 = PointNetSetAbstraction(128, 0.4, 64, 128, [128, 128, 256])
-        self.sa3 = PointNetSetAbstraction(32, 0.8, 128, 256, [256, 512, 1024])
+        self.sa1 = PointNetSetAbstraction(512, 2.0, 32, input_dim, [64, 64, 128], group_all=True)
+        self.sa2 = PointNetSetAbstraction(128, 2.0, 64, 128 + 3, [128, 128, 256], group_all=True)
+        self.sa3 = PointNetSetAbstraction(32, 2.0, 128, 256 + 3, [256, 512, 1024], group_all=True)
 
         # Feature Propagation Layers
         self.fp3 = PointNetFeaturePropagation(1024 + 256, [512, 512, 256])
         self.fp2 = PointNetFeaturePropagation(256 + 128, [256, 256, 128])
-        self.fp1 = PointNetFeaturePropagation(128 + input_dim, [128, 128, 128])
+        self.fp1 = PointNetFeaturePropagation(128 + 4, [128, 128, 128])
 
         # Output MLP for per-point offset prediction and noise classification
         self.semantic_linear = MLP(128, 2, norm_fn=norm_fn, num_layers=2)
@@ -89,9 +90,9 @@ class PointNet2(nn.Module):
 
         return backbone_features
 
-    def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, **kwargs):
+    def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, masks_pad, **kwargs):
         loss_dict = dict()
-        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(), model_output['offset_predictions'][masks_off].float(), 
+        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'][masks_pad].float(), model_output['offset_predictions'][masks_pad][masks_off].float(), 
                                                             semantic_labels, offset_labels[masks_off])
         loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
         loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
