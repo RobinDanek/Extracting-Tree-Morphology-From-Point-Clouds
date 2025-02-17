@@ -4,9 +4,10 @@ import torch
 import os
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+from collections import defaultdict
 
 class TreeSet(Dataset):
-    def __init__(self, data_root, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
+    def __init__(self, data_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -19,7 +20,8 @@ class TreeSet(Dataset):
             noise_root (str, optional): Path to the noise point clouds directory.
         """
         # Main dataset paths
-        self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.npy')]
+        # self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.npy')]
+        self.data_paths = data_paths
         self.data_dict = {os.path.basename(path): path for path in self.data_paths}
         
         # Noise dataset paths (optional)
@@ -262,6 +264,9 @@ class TreeSet(Dataset):
             collated_batch["noise_masks_pad"] = torch.stack(noise_masks_pad)
 
         return collated_batch
+    
+
+########### DATA LOADING #########
 
 
 def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
@@ -285,3 +290,61 @@ def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
         pin_memory=True,  # Optimize memory transfer between CPU and GPU
         collate_fn=collate_fn
     )
+
+
+def get_treesets_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8 ):
+    # This function returns the training and testset created by random picking of clouds
+    data_paths_train = [os.path.join(data_root, 'trainset', path) for path in os.listdir(data_root, 'trainset') if path.endswith('.npy')]
+    data_paths_test = [os.path.join(data_root, 'testset', path) for path in os.listdir(data_root, 'testset') if path.endswith('.npy')]
+
+    trainset = TreeSet( 
+        data_paths_train, training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        noise_root=noise_root, min_height=min_height 
+        )
+    
+    testset = TreeSet( 
+        data_paths_test, training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        noise_root=noise_root, min_height=min_height 
+        )
+    
+    return trainset, testset
+
+
+def get_treesets_plot_split( data_root, test_plot, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8 ):
+    # This function uses one plot as testset and the other plots as trainset
+    files = [os.path.join(data_root, 'cloud', f) for f in os.listdir( os.path.join(data_root, 'cloud') ) if f.endswith('.npy')]
+    filenames = [f for f in os.listdir( os.path.join(data_root, 'cloud') ) if f.endswith('.npy')]
+
+    grouped_files = defaultdict(list)
+    unique_numbers = []
+    for f, fn in zip(files, filenames):
+        # Extract the first number from the filename
+        number = fn[0]  # Get the first number (e.g., 83, 81, 85)
+        grouped_files[number].append(f)
+        if number not in unique_numbers:
+            unique_numbers.append( number )
+
+    data_paths_train = []
+    data_paths_test = []
+
+    for number in unique_numbers:
+        if number != f'{test_plot}':
+            data_paths_train.extend( grouped_files[number] )
+        else:
+            data_paths_test = grouped_files[number]
+
+    trainset = TreeSet( 
+        data_paths_train, training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        noise_root=noise_root, min_height=min_height 
+        )
+    
+    testset = TreeSet( 
+        data_paths_test, training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        noise_root=noise_root, min_height=min_height 
+        )
+    
+    return trainset, testset

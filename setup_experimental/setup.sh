@@ -12,7 +12,7 @@ conda install -c conda-forge tensorboard -y
 conda install -c conda-forge tensorboardx -y
 
 # additional installation of pip packages (some packages might not be available in conda); specified in requirements.txt
-pip install -r setup/requirements.txt
+pip install -r setup_experimental/requirements.txt
 
 # build
 pip install -e .

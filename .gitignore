@@ -6,6 +6,7 @@ data/labeled/cloud/*
 *.html
 TreeLearn/
 !Modules/TreeLearn
+ModelSaves/
 *.txt
 
 # Ignore setup_gwdg
