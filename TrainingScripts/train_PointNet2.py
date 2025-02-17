@@ -3,7 +3,7 @@ import numpy as np
 import os
 from Modules.PointNet2.PointNet2 import PointNet2
 from Modules.train_utils import run_training
-from Modules.DataLoading.TreeSet import TreeSet, get_dataloader
+from Modules.DataLoading.RasterizedTreeSet import get_rasterized_treesets_plot_split, get_rasterized_treesets_random_split, get_dataloader
 from Modules.Utils import EarlyStopper
 from timm.scheduler.cosine_lr import CosineLRScheduler
 import argparse
@@ -47,6 +47,9 @@ def log_parameters(args):
     logging.info(f"Used extra noise: {args.extra_noise}")
     logging.info(f"Semantic loss multiplier: {args.sem_loss_mult}")
     logging.info(f"Offset loss multiplier: {args.sem_loss_mult}")
+    logging.info(f"Cross validation: {args.cross_validate}")
+    if test_plot:
+        logging.info(f"Test plot: {test_plot}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -69,76 +72,149 @@ def parse_args():
     parser.add_argument("--extra_noise", action="store_true", help="Use extra dataset for noise prediction")
     parser.add_argument("--sem_loss_mult", type=float, default=1.0, help="Weighting factor of semantic loss")
     parser.add_argument("--off_loss_mult", type=float, default=1.0, help="Weighting factor of offset loss")
+    parser.add_argument("--cross_validate", action="store_true", help="Train models for cross validation across plots")
+    parser.add_argument("--test_plots", type=int, nargs='+', help="The plots that should be used as test_plots", default=[3,4,6,8])
+    parser.add_argument("--raster_size", type=float, default=2.0, help="The size of the squares used for rasterizing the clouds")
+    parser.add_argument("--raster_stride", type=float, default=None, help="The stride of the raster")
 
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
 
-    # Setup logging
-    setup_logging(args.model_save_path)
-    
-    # Log parameters
-    log_parameters(args)
-
     ###### Define parameters #######
     batch_size = args.batch_size
     epochs = args.epochs
 
     # Train & Val loader
-    train_root = os.path.join('data', 'labeled', 'offset', 'trainset')
-    val_root = os.path.join('data', 'labeled', 'offset', 'testset')
+    data_root = os.path.join('data', 'labeled', 'offset')
     if args.extra_noise:
-        train_root = os.path.join('data', 'labeled', 'noise', 'trainset')
-        val_root = os.path.join('data', 'labeled', 'noise', 'testset')
+        data_root = os.path.join('data', 'labeled', 'noise')
 
-    # Use extra dataset for noise learning if prompted
-    trainset = TreeSet(data_root=train_root, training=True, noise_distance=args.noise_threshold)
-    valset = TreeSet(data_root=val_root, training=False, noise_distance=args.noise_threshold)
+    ####### CROSS VALIDATED PART ########
+    if args.cross_validate:
+        for num in args.test_plots:
+            # Place the models in a folder with the original model name. Not the best code, but then this works
+            # interchangably with the non-cross-validated version
+            filename = os.path.splitext(os.path.basename( args.model_save_path ))[0]
+            new_save_path = args.model_save_path.replace(f'{filename}.pt', f'{filename}_CV/{filename}_P{num}.pt')
+            new_dict = args.model_save_path.replace(f'{filename}.pt', f'{filename}_CV/')
+            
+            if not os.path.exists( new_dict ):
+                os.makedirs( new_dict )
+            
 
-    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_padded)
-    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_padded)
+            setup_logging(new_save_path)
+            log_parameters(args, num)
 
-    # Model
-    model = PointNet2(
-        loss_multiplier_semantic=args.sem_loss_mult,
-        loss_multiplier_offset=args.off_loss_mult,
-        dim_feat=args.dim_feat,
-        use_coords=args.coords,
-        use_features=args.features
-    ).cuda()
+            trainset, valset = get_rasterzied_treesets_plot_split(
+                data_root, test_plot=num, noise_distance=args.noise_threshold,
+                raster_size=args.raster_size, stride=args.raster_stride
+            )
 
-    # Scheduler and optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
-    scheduler = CosineLRScheduler(
-        optimizer,
-        t_initial=args.t_initial,
-        lr_min=args.lr_min,
-        cycle_decay=1,
-        warmup_lr_init=0.00001,
-        warmup_t=args.warmup_t,
-        cycle_limit=1,
-        t_in_epochs=True,
-    )
+            print(f"\nTesting on plot number {num}\nTrainset len: {len(trainset)}\tValset len: {len(valset)}")
 
-    # Early stopper
-    early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=args.model_save_path)
+            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
 
-    # Control over progress bar
-    if args.no_progress_bar:
-        fastprogress.fastprogress.NO_BAR = True  # Suppress the progress bar
+            # Model
+            model = PointNet2(
+                loss_multiplier_semantic=args.sem_loss_mult,
+                loss_multiplier_offset=args.off_loss_mult,
+                dim_feat=args.dim_feat,
+                use_coords=args.coords,
+                use_features=args.features
+            ).cuda()
+
+            # Scheduler and optimizer
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
+            scheduler = CosineLRScheduler(
+                optimizer,
+                t_initial=args.t_initial,
+                lr_min=args.lr_min,
+                cycle_decay=1,
+                warmup_lr_init=0.00001,
+                warmup_t=args.warmup_t,
+                cycle_limit=1,
+                t_in_epochs=True,
+            )
+
+            # Early stopper
+            early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=args.model_save_path)
+
+            # Control over progress bar
+            if args.no_progress_bar:
+                fastprogress.fastprogress.NO_BAR = True  # Suppress the progress bar
+            else:
+                fastprogress.fastprogress.NO_BAR = False  # Enable the progress bar
+
+
+            # Start training
+            run_training(
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                optimizer=optimizer,
+                epochs=epochs,
+                scheduler=scheduler,
+                early_stopper=early_stopper,
+                verbose=args.verbose
+            )
     else:
-        fastprogress.fastprogress.NO_BAR = False  # Enable the progress bar
+        # Setup logging
+        setup_logging(args.model_save_path)
+        
+        # Log parameters
+        log_parameters(args)
+
+        trainset, valset = get_rasterized_treesets_random_split(
+            data_root, noise_distance=args.noise_threshold,
+            raster_size=args.raster_size, stride=args.raster_stride
+            )
+
+        train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+        val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
+
+        # Model
+        model = PointNet2(
+            loss_multiplier_semantic=args.sem_loss_mult,
+            loss_multiplier_offset=args.off_loss_mult,
+            dim_feat=args.dim_feat,
+            use_coords=args.coords,
+            use_features=args.features
+        ).cuda()
+
+        # Scheduler and optimizer
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
+        scheduler = CosineLRScheduler(
+            optimizer,
+            t_initial=args.t_initial,
+            lr_min=args.lr_min,
+            cycle_decay=1,
+            warmup_lr_init=0.00001,
+            warmup_t=args.warmup_t,
+            cycle_limit=1,
+            t_in_epochs=True,
+        )
+
+        # Early stopper
+        early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=args.model_save_path)
+
+        # Control over progress bar
+        if args.no_progress_bar:
+            fastprogress.fastprogress.NO_BAR = True  # Suppress the progress bar
+        else:
+            fastprogress.fastprogress.NO_BAR = False  # Enable the progress bar
 
 
-    # Start training
-    run_training(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        optimizer=optimizer,
-        epochs=epochs,
-        scheduler=scheduler,
-        early_stopper=early_stopper,
-        verbose=args.verbose
-    )
+        # Start training
+        run_training(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            epochs=epochs,
+            scheduler=scheduler,
+            early_stopper=early_stopper,
+            verbose=args.verbose
+        )
