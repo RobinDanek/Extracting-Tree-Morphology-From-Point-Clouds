@@ -32,18 +32,26 @@ class PointNet2(nn.Module):
             input_dim += 3
         if use_features:
             input_dim += dim_feat
-        self.sa1 = PointNetSetAbstraction(512, 2.0, 32, input_dim, [64, 64, 128], group_all=True)
-        self.sa2 = PointNetSetAbstraction(128, 2.0, 64, 128 + 3, [128, 128, 256], group_all=True)
-        self.sa3 = PointNetSetAbstraction(32, 2.0, 128, 256 + 3, [256, 512, 1024], group_all=True)
+        # self.sa1 = PointNetSetAbstraction(512, 2.0, 32, input_dim, [64, 64, 128], group_all=True)
+        # self.sa2 = PointNetSetAbstraction(128, 2.0, 64, 128 + 3, [128, 128, 256], group_all=True)
+        # self.sa3 = PointNetSetAbstraction(32, 2.0, 128, 256 + 3, [256, 512, 1024], group_all=True)
 
-        # Feature Propagation Layers
-        self.fp3 = PointNetFeaturePropagation(1024 + 256, [512, 512, 256])
-        self.fp2 = PointNetFeaturePropagation(256 + 128, [256, 256, 128])
-        self.fp1 = PointNetFeaturePropagation(128 + 4, [128, 128, 128])
+        # # Feature Propagation Layers
+        # self.fp3 = PointNetFeaturePropagation(1024 + 256, [512, 512, 256])
+        # self.fp2 = PointNetFeaturePropagation(256 + 128, [256, 256, 128])
+        # self.fp1 = PointNetFeaturePropagation(128 + 4, [128, 128, 128])
+        self.sa1 = PointNetSetAbstraction(1024, 0.1, 32, input_dim, [32, 32, 64], False)
+        self.sa2 = PointNetSetAbstraction(256, 0.2, 32, 64 + 3, [64, 64, 128], False)
+        self.sa3 = PointNetSetAbstraction(64, 0.4, 32, 128 + 3, [128, 128, 256], False)
+        self.sa4 = PointNetSetAbstraction(16, 0.8, 32, 256 + 3, [256, 256, 512], False)
+        self.fp4 = PointNetFeaturePropagation(768, [256, 256])
+        self.fp3 = PointNetFeaturePropagation(384, [256, 256])
+        self.fp2 = PointNetFeaturePropagation(320, [256, 128])
+        self.fp1 = PointNetFeaturePropagation(128, [128, 128, 128])
 
         # Output MLP for per-point offset prediction and noise classification
-        self.semantic_linear = MLP(128, 2, norm_fn=norm_fn, num_layers=2)
-        self.offset_linear = MLP(128, 3, norm_fn=norm_fn, num_layers=2)
+        self.semantic_linear = ConvHead(128, 2, norm_fn=norm_fn, num_layers=2)
+        self.offset_linear = ConvHead(128, 3, norm_fn=norm_fn, num_layers=2)
 
         self.init_weights()
 
@@ -62,8 +70,6 @@ class PointNet2(nn.Module):
         output['backbone_feats'] = self.forward_backbone(
             coords=batch["coords"],
             feats=batch["feats"],
-            batch_ids=batch["batch_ids"],
-            batch_size=batch["batch_size"]
         )
         
         # Head pass
@@ -76,17 +82,34 @@ class PointNet2(nn.Module):
         return output
 
     @cuda_cast
-    def forward_backbone(self, coords, feats, batch_ids, batch_size, **kwargs):
+    def forward_backbone(self, coords, feats, **kwargs):
         # Handle optional features before passing to the network
-        feats = feats if self.use_features else None
+        if self.use_features:
+            l0_points = feats
+        else:
+            l0_points = None
 
-        l1_xyz, l1_features = self.sa1(coords, feats)
-        l2_xyz, l2_features = self.sa2(l1_xyz, l1_features)
-        l3_xyz, l3_features = self.sa3(l2_xyz, l2_features)
+        l0_xyz = coords
 
-        l2_features = self.fp3(l2_xyz, l3_xyz, l2_features, l3_features)
-        l1_features = self.fp2(l1_xyz, l2_xyz, l1_features, l2_features)
-        backbone_features = self.fp1(coords, l1_xyz, feats, l1_features)
+        l1_xyz, l1_points = self.sa1(l0_xyz, l0_points)
+        l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
+        l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
+        l4_xyz, l4_points = self.sa4(l3_xyz, l3_points)
+
+        l3_points = self.fp4(l3_xyz, l4_xyz, l3_points, l4_points)
+        l2_points = self.fp3(l2_xyz, l3_xyz, l2_points, l3_points)
+        l1_points = self.fp2(l1_xyz, l2_xyz, l1_points, l2_points)
+        l0_points = self.fp1(l0_xyz, l1_xyz, None, l1_points)
+
+        # l1_xyz, l1_features = self.sa1(coords, feats)
+        # l2_xyz, l2_features = self.sa2(l1_xyz, l1_features)
+        # l3_xyz, l3_features = self.sa3(l2_xyz, l2_features)
+
+        # l2_features = self.fp3(l2_xyz, l3_xyz, l2_features, l3_features)
+        # l1_features = self.fp2(l1_xyz, l2_xyz, l1_features, l2_features)
+        # backbone_features = self.fp1(coords, l1_xyz, feats, l1_features)
+
+        backbone_features = l0_points
 
         return backbone_features
 

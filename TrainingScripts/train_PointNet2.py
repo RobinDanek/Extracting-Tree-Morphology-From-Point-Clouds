@@ -29,7 +29,7 @@ def setup_logging(model_save_path):
     # Log the initial arguments
     logging.info("Training started with the following parameters:")
 
-def log_parameters(args):
+def log_parameters(args, test_plot=None):
     # Log the parameters used in the script
     logging.info(f"Batch size: {args.batch_size}")
     logging.info(f"Epochs: {args.epochs}")
@@ -91,6 +91,8 @@ if __name__ == "__main__":
     if args.extra_noise:
         data_root = os.path.join('data', 'labeled', 'noise')
 
+    args.raster_stride = args.raster_stride if args.raster_stride is not None else args.raster_size/2
+
     ####### CROSS VALIDATED PART ########
     if args.cross_validate:
         for num in args.test_plots:
@@ -107,7 +109,7 @@ if __name__ == "__main__":
             setup_logging(new_save_path)
             log_parameters(args, num)
 
-            trainset, valset = get_rasterzied_treesets_plot_split(
+            trainset, valset = get_rasterized_treesets_plot_split(
                 data_root, test_plot=num, noise_distance=args.noise_threshold,
                 raster_size=args.raster_size, stride=args.raster_stride
             )

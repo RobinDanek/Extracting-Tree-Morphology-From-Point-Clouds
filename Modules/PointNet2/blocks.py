@@ -3,6 +3,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .pointnet2_utils import *
 
+
+class ConvHead(nn.Module):
+    def __init__(self, in_channels, out_channels, norm_fn=None, num_layers=2):
+        """
+        Constructs a head using 1x1 convolutions.
+        Args:
+            in_channels (int): Number of input channels per point.
+            out_channels (int): Number of output channels per point.
+            norm_fn (callable, optional): Normalization function (e.g., nn.BatchNorm1d).
+            num_layers (int): Number of layers. The last layer maps to out_channels.
+        """
+        super(ConvHead, self).__init__()
+        layers = []
+        current_channels = in_channels
+        for i in range(num_layers - 1):
+            layers.append(nn.Conv1d(current_channels, current_channels, kernel_size=1))
+            if norm_fn is not None:
+                layers.append(norm_fn(current_channels))
+            layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Conv1d(current_channels, out_channels, kernel_size=1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        Args:
+            x: Input tensor of shape [B, in_channels, N].
+        Returns:
+            Output tensor of shape [B, out_channels, N].
+        """
+        return self.net(x)
+
 class MLP(nn.Sequential):
 
     def __init__(self, in_channels, out_channels, norm_fn=None, num_layers=2):

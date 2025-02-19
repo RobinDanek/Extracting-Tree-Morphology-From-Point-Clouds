@@ -294,8 +294,8 @@ def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
 
 def get_treesets_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8 ):
     # This function returns the training and testset created by random picking of clouds
-    data_paths_train = [os.path.join(data_root, 'trainset', path) for path in os.listdir(data_root, 'trainset') if path.endswith('.npy')]
-    data_paths_test = [os.path.join(data_root, 'testset', path) for path in os.listdir(data_root, 'testset') if path.endswith('.npy')]
+    data_paths_train = [os.path.join(data_root, 'trainset', path) for path in os.listdir(os.path.join(data_root, 'trainset')) if path.endswith('.npy')]
+    data_paths_test = [os.path.join(data_root, 'testset', path) for path in os.listdir(os.path.join(data_root, 'testset')) if path.endswith('.npy')]
 
     trainset = TreeSet( 
         data_paths_train, training=True, logger=logger, 

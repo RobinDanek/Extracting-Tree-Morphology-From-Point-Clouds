@@ -106,9 +106,28 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     sqrdists = square_distance(new_xyz, xyz)
     group_idx[sqrdists > radius ** 2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
-    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
-    mask = group_idx == N
-    group_idx[mask] = group_first[mask]
+    # MODIFY THE USE OF N AS PLACEHOLDER TO THE POINTS OWN IDX
+
+    # Get the first neighbor index for each query point
+    group_first = group_idx[:, :, 0].clone()  # [B, S]
+    
+    # Find query points that have no valid neighbors (group_first == N)
+    mask = group_first == N
+    if mask.sum() > 0:
+        # For these query points, find the nearest point (which should be valid)
+        # Note: torch.argmin will return the index of the minimal distance along the last dim.
+        # We compute it for each query point where mask is True.
+        nearest = torch.argmin(sqrdists, dim=-1)  # [B, S]
+        group_first[mask] = nearest[mask]
+    
+    # Expand group_first to match the last dimension of group_idx
+    group_first_expanded = group_first.unsqueeze(-1).expand(-1, -1, nsample)
+    # Replace all invalid indices in group_idx with the valid first neighbor index
+    group_idx[group_idx == N] = group_first_expanded[group_idx == N]
+
+    # group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+    # mask = group_idx == N
+    # group_idx[mask] = group_first[mask]
     return group_idx
 
 
