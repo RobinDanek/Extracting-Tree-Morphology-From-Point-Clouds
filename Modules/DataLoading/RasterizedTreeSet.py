@@ -110,10 +110,13 @@ class RasterizedTreeSet_Flattened(Dataset):
             # The labels and offset masks are not padded, as they are only used during loss calculation. Before the loss calculation 
             # the padded points are filtered out, so that no padded labels are needed for them
             semantic_labels.append(semantic_label)
+            #offset_labels.append(torch.cat([offsets, torch.zeros((pad_size, 3), device=offsets.device)], dim=0))
             offset_labels.append(offsets)
             offset_masks.append(offset_mask) 
 
-            # Create padding mask (True for real points, False for padded points)
+            # Create padding mask (True for real points, False for padded points). For the offset prediction just extend the mask
+            # offset_masks.append(torch.cat([offset_mask,
+            #                                torch.zeros(pad_size, dtype=torch.bool, device=offset_mask.device)], dim=0))
             masks_pad.append(torch.cat([torch.ones(num_points, dtype=torch.bool, device=points.device),
                                         torch.zeros(pad_size, dtype=torch.bool, device=points.device)], dim=0))
 
@@ -124,8 +127,10 @@ class RasterizedTreeSet_Flattened(Dataset):
         xyzs = torch.stack(xyzs).transpose(-1,-2)
         feats = torch.stack(feats).transpose(-1,-2)
         semantic_labels = torch.cat(semantic_labels, 0).long()
-        offset_labels = torch.cat(offset_labels, 0).float().transpose(-1,-2)
+        offset_labels = torch.cat(offset_labels, 0).float()
         offset_masks = torch.cat(offset_masks, 0).bool()
+        # offset_labels = torch.stack(offset_labels)
+        # offset_masks = torch.stack(offset_masks)
         masks_pad = torch.stack(masks_pad)  # <-- Convert list to tensor
         raster_point_ids = torch.cat( raster_point_ids, 0 ).long()
 

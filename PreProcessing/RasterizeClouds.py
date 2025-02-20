@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from collections import defaultdict
+from multiprocessing import Pool
+from tqdm import tqdm
 from fastprogress.fastprogress import progress_bar
 import argparse
 
@@ -13,10 +15,12 @@ def parse_args():
     parser.add_argument("--data_root", type=str, default='data/labeled/offset', help="root of the data directory you are splitting")
     parser.add_argument("--raster_size", type=float, default=2.0)
     parser.add_argument("--stride", type=float, default=None)
+    parser.add_argument("--parallel", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
 
     return parser.parse_args()
 
-def rasterize(data_dir, eval_dir, raster_size=2.0, stride=None):
+def rasterize(data_dir, eval_dir, raster_size=2.0, stride=None, overwrite=False):
     
     os.makedirs(eval_dir, exist_ok=True)
     data_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npy')]
@@ -62,9 +66,76 @@ def rasterize(data_dir, eval_dir, raster_size=2.0, stride=None):
                         raster = np.hstack((raster, raster_indices))
 
                         save_path = os.path.join(eval_dir, f'{plot_number}_{tree_number}_{raster_id}.npy')
+                        if os.path.exists(save_path) and not overwrite:
+                            continue
                         np.save( save_path, raster )
 
     print(f"Finished rasterization and created {num_rasters} rasters")
+
+
+############ Multiprocessing ##############
+
+def process_file(cloud_path, eval_dir, raster_size, stride, overwrite):
+    raster_id = 0
+    # Extract unique identifiers from filename
+    file_name = os.path.splitext(os.path.basename(cloud_path))[0]
+    plot_number, tree_number = file_name.split("_")[:2]
+
+    # Load the point cloud and get points and indices
+    cloud = np.load(cloud_path)
+    points = cloud[:, :3]
+    point_indices = np.arange(len(cloud))
+
+    # Get bounds of the cloud
+    min_xyz = np.min(points, axis=0)
+    max_xyz = np.max(points, axis=0)
+
+    # Generate raster grid using the stride
+    x_vals = np.arange(min_xyz[0], max_xyz[0], stride)
+    y_vals = np.arange(min_xyz[1], max_xyz[1], stride)
+    z_vals = np.arange(min_xyz[2], max_xyz[2], stride)
+
+    # Process each window in the grid
+    for x in x_vals:
+        for y in y_vals:
+            for z in z_vals:
+                mask = (
+                    (points[:, 0] >= x) & (points[:, 0] < x + raster_size) &
+                    (points[:, 1] >= y) & (points[:, 1] < y + raster_size) &
+                    (points[:, 2] >= z) & (points[:, 2] < z + raster_size)
+                )
+                raster = cloud[mask]
+                if len(raster) > 0:
+                    raster_indices = point_indices[mask][:, None]  # Reshape for concatenation
+                    raster_id += 1
+                    # Append indices as a new last column
+                    raster = np.hstack((raster, raster_indices))
+                    save_path = os.path.join(eval_dir, f'{plot_number}_{tree_number}_{raster_id}.npy')
+                    if os.path.exists(save_path) and not overwrite:
+                        continue
+                    np.save(save_path, raster)
+    # Return the number of rasters created for this file (for summary/counting)
+    return raster_id
+
+def rasterize_parallel(data_dir, eval_dir, raster_size=2.0, stride=2.0, overwrite=False):
+    os.makedirs(eval_dir, exist_ok=True)
+    # Build a list of file paths to process
+    data_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npy')]
+    
+    # Prepare arguments for each file
+    args = [(cloud_path, eval_dir, raster_size, stride, overwrite) for cloud_path in data_paths]
+
+    total_rasters = 0
+    # Create a process pool and use starmap to pass multiple arguments
+    with Pool() as pool:
+        # tqdm shows progress for the list of files being processed
+        results = list(tqdm(pool.starmap(process_file, args), total=len(args)))
+    
+    total_rasters = sum(results)
+    print(f"Finished rasterization and created {total_rasters} rasters")
+
+
+################ MAIN ###############
 
 
 if __name__ == "__main__":
@@ -75,4 +146,7 @@ if __name__ == "__main__":
     data_dir = os.path.join( args.data_root, 'cloud' )
     eval_dir = os.path.join( args.data_root, f'rasterized_R{args.raster_size:.1f}_S{stride:.1f}', 'cloud' )
 
-    rasterize(data_dir=data_dir, eval_dir=eval_dir, raster_size=args.raster_size, stride=stride)
+    if args.parallel:
+        rasterize_parallel(data_dir=data_dir, eval_dir=eval_dir, raster_size=args.raster_size, stride=stride)
+    else:
+        rasterize(data_dir=data_dir, eval_dir=eval_dir, raster_size=args.raster_size, stride=stride)

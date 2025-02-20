@@ -46,7 +46,7 @@ def log_parameters(args, test_plot=None):
     logging.info(f"Model save path: {args.model_save_path}")
     logging.info(f"Used extra noise: {args.extra_noise}")
     logging.info(f"Semantic loss multiplier: {args.sem_loss_mult}")
-    logging.info(f"Offset loss multiplier: {args.sem_loss_mult}")
+    logging.info(f"Offset loss multiplier: {args.off_loss_mult}")
     logging.info(f"Cross validation: {args.cross_validate}")
     if test_plot:
         logging.info(f"Test plot: {test_plot}")

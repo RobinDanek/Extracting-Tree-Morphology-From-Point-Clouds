@@ -115,8 +115,27 @@ class PointNet2(nn.Module):
 
     def get_loss(self, model_output, semantic_labels, offset_labels, masks_off, masks_pad, **kwargs):
         loss_dict = dict()
-        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'][masks_pad].float(), model_output['offset_predictions'][masks_pad][masks_off].float(), 
-                                                            semantic_labels, offset_labels[masks_off])
+
+        # Permute to [B, max_points, C] and then flatten to [B * max_points, C]
+        sem_logits_flat = model_output['semantic_prediction_logits'].permute(0, 2, 1).reshape(-1, 2)
+        off_preds_flat   = model_output['offset_predictions'].permute(0, 2, 1).reshape(-1, 3)
+
+        # Flatten the padding mask from [B, max_points] to [B * max_points]
+        mask_flat = masks_pad.reshape(-1)
+
+        # Index the flattened predictions with the valid mask.
+        # This yields tensors of shape [N_valid, C].
+        sem_logits_valid = sem_logits_flat[mask_flat]
+        off_preds_valid  = off_preds_flat[mask_flat]
+
+        # Now apply offset mask
+        off_preds_valid = off_preds_valid[masks_off]
+
+        semantic_loss, offset_loss = point_wise_loss(sem_logits_valid.float(),
+                                              off_preds_valid.float(),
+                                              semantic_labels,
+                                              offset_labels)
+
         loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
         loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
 

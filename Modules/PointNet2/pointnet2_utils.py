@@ -146,14 +146,10 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     B, N, C = xyz.shape
     S = npoint
     fps_idx = farthest_point_sample(xyz, npoint) # [B, npoint, C]
-    print("Sampled farthest point")
     new_xyz = index_points(xyz, fps_idx)
-    print("Passed index_points1")
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
-    print("performed ball query")
     grouped_xyz = index_points(xyz, idx) # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
-    print("Created grouped norm")
 
     if points is not None:
         grouped_points = index_points(points, idx)
