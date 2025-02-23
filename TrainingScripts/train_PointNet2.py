@@ -3,7 +3,7 @@ import numpy as np
 import os
 from Modules.PointNet2.PointNet2 import PointNet2
 from Modules.train_utils import run_training
-from Modules.DataLoading.RasterizedTreeSet import get_rasterized_treesets_plot_split, get_rasterized_treesets_random_split, get_dataloader
+from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Utils import EarlyStopper
 from timm.scheduler.cosine_lr import CosineLRScheduler
 import argparse
@@ -50,6 +50,11 @@ def log_parameters(args, test_plot=None):
     logging.info(f"Cross validation: {args.cross_validate}")
     if test_plot:
         logging.info(f"Test plot: {test_plot}")
+    logging.info(f"Half size: {args.half_size}")
+    logging.info(f"Overfit: {args.overfit}")
+    logging.info(f"Hierarchical instead of flattened: {args.hierarchical}")
+    if args.hierarchical:
+        logging.info(f"Minibatch size: {args.minibatch_size}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -76,6 +81,10 @@ def parse_args():
     parser.add_argument("--test_plots", type=int, nargs='+', help="The plots that should be used as test_plots", default=[3,4,6,8])
     parser.add_argument("--raster_size", type=float, default=2.0, help="The size of the squares used for rasterizing the clouds")
     parser.add_argument("--raster_stride", type=float, default=None, help="The stride of the raster")
+    parser.add_argument("--half_size", action="store_true", help="Halves the MLP channels in the model")
+    parser.add_argument("--overfit", action="store_true")
+    parser.add_argument("--hierarchical", action="store_true")
+    parser.add_argument("--minibatch_size", type=int, default=15)
 
     return parser.parse_args()
 
@@ -84,6 +93,9 @@ if __name__ == "__main__":
 
     ###### Define parameters #######
     batch_size = args.batch_size
+    if args.hierarchical:
+        batch_size = 1
+        args.batch_size = 1
     epochs = args.epochs
 
     # Train & Val loader
@@ -109,10 +121,17 @@ if __name__ == "__main__":
             setup_logging(new_save_path)
             log_parameters(args, num)
 
-            trainset, valset = get_rasterized_treesets_plot_split(
-                data_root, test_plot=num, noise_distance=args.noise_threshold,
-                raster_size=args.raster_size, stride=args.raster_stride
-            )
+            if args.hierarchical:
+                trainset, valset = get_rasterized_treesets_hierarchical_plot_split(
+                    data_root, test_plot=num, noise_distance=args.noise_threshold,
+                    raster_size=args.raster_size, stride=args.raster_stride,
+                    minibatch_size=args.minibatch_size
+                )
+            else:
+                trainset, valset = get_rasterized_treesets_flattened_plot_split(
+                    data_root, test_plot=num, noise_distance=args.noise_threshold,
+                    raster_size=args.raster_size, stride=args.raster_stride
+                )
 
             print(f"\nTesting on plot number {num}\nTrainset len: {len(trainset)}\tValset len: {len(valset)}")
 
@@ -125,7 +144,8 @@ if __name__ == "__main__":
                 loss_multiplier_offset=args.off_loss_mult,
                 dim_feat=args.dim_feat,
                 use_coords=args.coords,
-                use_features=args.features
+                use_features=args.features,
+                half_size=args.half_size
             ).cuda()
 
             # Scheduler and optimizer
@@ -142,7 +162,7 @@ if __name__ == "__main__":
             )
 
             # Early stopper
-            early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=args.model_save_path)
+            early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=new_save_path)
 
             # Control over progress bar
             if args.no_progress_bar:
@@ -160,7 +180,8 @@ if __name__ == "__main__":
                 epochs=epochs,
                 scheduler=scheduler,
                 early_stopper=early_stopper,
-                verbose=args.verbose
+                verbose=args.verbose,
+                raster_hierarchical=args.hierarchical
             )
     else:
         # Setup logging
@@ -169,10 +190,24 @@ if __name__ == "__main__":
         # Log parameters
         log_parameters(args)
 
-        trainset, valset = get_rasterized_treesets_random_split(
-            data_root, noise_distance=args.noise_threshold,
-            raster_size=args.raster_size, stride=args.raster_stride
+        if args.hierarchical:
+            trainset, valset = get_rasterized_treesets_hierarchical_random_split(
+                data_root, noise_distance=args.noise_threshold,
+                raster_size=args.raster_size, stride=args.raster_stride,
+                minibatch_size=args.minibatch_size
             )
+        else:
+            trainset, valset = get_rasterized_treesets_flattened_random_split(
+                data_root, noise_distance=args.noise_threshold,
+                raster_size=args.raster_size, stride=args.raster_stride
+                )
+        
+        if args.overfit and not args.hierarchical:
+            trainset, valset = get_rasterized_treesets_flattened_single_sample(
+                data_root, noise_distance=args.noise_threshold,
+                raster_size=args.raster_size, stride=args.raster_stride,
+                batch_size=args.batch_size
+                )
 
         train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
         val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
@@ -183,7 +218,8 @@ if __name__ == "__main__":
             loss_multiplier_offset=args.off_loss_mult,
             dim_feat=args.dim_feat,
             use_coords=args.coords,
-            use_features=args.features
+            use_features=args.features,
+            half_size=args.half_size
         ).cuda()
 
         # Scheduler and optimizer
@@ -218,5 +254,6 @@ if __name__ == "__main__":
             epochs=epochs,
             scheduler=scheduler,
             early_stopper=early_stopper,
-            verbose=args.verbose
+            verbose=args.verbose,
+            raster_hierarchical=args.hierarchical
         )

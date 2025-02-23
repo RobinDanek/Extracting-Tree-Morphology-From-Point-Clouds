@@ -193,9 +193,12 @@ class PointNetFeaturePropagation(nn.Module):
         else:
             dists = square_distance(xyz1, xyz2)
             dists, idx = dists.sort(dim=-1)
-            dists, idx = dists[:, :, :3], idx[:, :, :3]  # [B, N, 3]
+            k = min(3, S)  # Use k nearest neighbors, where k <= S
+            dists, idx = dists[:, :, :k], idx[:, :, :k]  # [B, N, 3]
+            
 
-            dist_recip = 1.0 / (dists + 1e-8)
+            dists_clamped = torch.clamp(dists, min=1e-6)
+            dist_recip = 1.0 / dists_clamped
             norm = torch.sum(dist_recip, dim=2, keepdim=True)
             weight = dist_recip / norm
             interpolated_points = torch.sum(index_points(points2, idx) * weight.view(B, N, 3, 1), dim=2)

@@ -148,103 +148,203 @@ class RasterizedTreeSet_Flattened(Dataset):
 
 
 
-class RasterizedTreeSet_WholeTree(Dataset):
-    def __init__( self, data_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None):
+class RasterizedTreeSet_Hierarchical(Dataset):
+    def __init__(self, json_path, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20):
         """
         Args:
-            point_clouds (list of np.ndarray): Each entry is (N, 3) with XYZ coordinates.
-            labels (list of np.ndarray): Each entry is (N,) with per-point labels.
-            raster_size (float): Size of the cubic rasters.
-            stride (float, optional): Step size for raster movement. Defaults to raster_size / 2 (50% overlap).
+            json_path (str): Path to the JSON file with tree and raster metadata.
+            training (bool): Whether the dataset is used for training.
+            logger (optional): Logger to output info.
+            data_augmentations (callable, optional): Augmentations to apply on the data.
+            noise_distance (float): Threshold for valid offsets (if applicable).
         """
-        self.data_paths = data_paths
-
+        with open(json_path, 'r') as f:
+            self.data = json.load(f)
+        self.tree_keys = list(self.data.keys())
+        self.training = training
+        self.logger = logger
+        self.data_augmentations = data_augmentations
         self.noise_distance = noise_distance
-
-        self.raster_size = raster_size
-        self.stride = stride if stride is not None else raster_size / 2
-
-        if logger:
-            self.logger = logger
+        self.minibatch_size = minibatch_size
+        
+        if self.logger:
             mode = 'train' if training else 'test'
-            self.logger.info(f"Initialized {mode} dataset with {len(self.data_paths)} scans.")
+            self.logger.info(f"Initialized {mode} hierarchical dataset with {len(self.trees)} trees.")
 
     def __len__(self):
-        return len(self.data_paths)
+        return len(self.tree_keys)
 
     def __getitem__(self, idx):
-         # Load main data
-        data_path = self.data_paths[idx]
-        file_name = os.path.basename(data_path)
-        data = np.load(data_path)
+        # Retrieve tree-level metadata from JSON
+        tree_info = self.data[self.tree_keys[idx]]
+        
+        # Load the full cloud for the tree (if needed for aggregation later)
+        data = np.load(tree_info["path"])
         points, offsets, features = (
             torch.from_numpy(data[:, :3]).float(),
             torch.from_numpy(data[:, 3:6]).float(),
             torch.from_numpy(data[:, 7:]).float(),
         )
-        
-        min_xyz = points.min(axis=0).values.numpy()
-        max_xyz = points.max(axis=0).values.numpy()
-        
-        # Generate raster grid
-        x_vals = np.arange(min_xyz[0], max_xyz[0], self.stride)
-        y_vals = np.arange(min_xyz[1], max_xyz[1], self.stride)
-        z_vals = np.arange(min_xyz[2], max_xyz[2], self.stride)
-
-        # Calculate semantic labels and masks
         offset_norms = offsets.norm(dim=1)
         offset_mask = (offset_norms <= self.noise_distance).bool()  # True for valid offsets
+        semantic_label = (offset_norms > self.noise_distance).long()
 
-        semantic_label = (offset_norms > self.noise_distance).long()  # 1 for valid points, 0 for noise
-
-        # Apply augmentations if in training mode
-        if self.data_augmentations and self.training:
-            points, offsets = self.data_augmentations(points, offsets)
+        indices = np.arange(len(points))
         
+        # Load all rasters for this tree
         rasters = []
-        raster_off_labels = []
-        raster_sem_labels = []
-        raster_off_masks = []
-        raster_ids = []  # To track which raster each point belongs to
-        point_to_raster_ids = [[] for _ in range(len(points))]  # List of lists
-        
-        raster_index = 0
-        for x in x_vals:
-            for y in y_vals:
-                for z in z_vals:
-                    mask = (
-                        (points[:, 0] >= x) & (points[:, 0] < x + self.raster_size) &
-                        (points[:, 1] >= y) & (points[:, 1] < y + self.raster_size) &
-                        (points[:, 2] >= z) & (points[:, 2] < z + self.raster_size)
+        for raster_meta in tree_info["rasters"]:
+            # Load raster data from .npy file
+            bounds = raster_meta["bounds"]
+            start = bounds["min"]
+            end = bounds["max"]
+            
+            # Create the raster
+            mask = (
+                        (points[:, 0] >= start[0]) & (points[:, 0] < end[0]) &
+                        (points[:, 1] >= start[1]) & (points[:, 1] < end[1]) &
+                        (points[:, 2] >= start[2]) & (points[:, 2] < end[2])
                     )
-                    
-                    raster_points = points[mask]
-                    raster_offsets = offsets[mask]
-                    raster_semantic_labels = semantic_label[mask]
-                    raster_offset_mask = offset_mask[mask]
-                    
-                    if len(raster_points) > 0:
-                        rasters.append(raster_points)
-                        raster_off_labels.append(raster_offsets)
-                        raster_sem_labels.append( raster_semantic_labels )
-                        raster_off_masks.append( raster_offset_mask )
-                        raster_ids.append(raster_index)
-                        
-                        # Assign points to rasters
-                        for i, m in enumerate(mask):
-                            if m:
-                                point_to_raster_ids[i].append(raster_index)
-                        
-                        raster_index += 1
+            
+            raster_points = points[mask]
+            raster_features = features[mask]
+            #raster_offsets = offsets[mask]
+            raster_point_ids = torch.from_numpy(indices[mask]).long()
+
+            raster_offset_mask = offset_mask[mask]  # True for valid offsets
+            #raster_semantic_label = semantic_label[mask] 
+            
+            # Store the raster tensor along with its metadata
+            rasters.append({
+                "points": raster_points,
+                "features": raster_features,
+                # "offsets": raster_offsets,
+                # "semantic_label": raster_semantic_label,
+                "offset_mask": raster_offset_mask,
+                "point_ids": raster_point_ids
+            })
         
+        # Return a dictionary with the full cloud and list of raster dicts
         return {
-            "rasters": rasters,  # List of (M, 3) point subsets
-            "raster_off_labels": raster_off_labels,  # List of (M, 3) label subsets
-            "raster_sem_labels": raster_sem_labels,
-            "raster_off_masks": raster_off_masks,
-            "raster_ids": raster_ids,  # Raster index for each subset
-            "point_to_raster_ids": point_to_raster_ids,  # List mapping each original point to raster indices
+            "rasters": rasters, 
+            "cloud_length": len(data),
+            "offset_labels": offsets,
+            "semantic_labels": semantic_label
+            }
+    
+    def collate_fn(self, batch):
+        """
+        Custom collate function that pads point clouds in the batch to the largest cloud size.
+        This is needed for passing the clouds without voxelization while keeping their full size
+
+        Args:
+            batch (list): List of dictionaries, each containing point cloud data and labels.
+
+        Returns:
+            dict: Batched data with padding and masks.
+        """
+        batch = batch[0] # Get contents of the list
+        # THIS ASSUMES THAT ALWAYS ONE TREE AT A TIME IS PROCESSED!! #
+        rasters = batch["rasters"]
+
+        minibatch_size = self.minibatch_size
+        while len(rasters) % minibatch_size == 1:
+            minibatch_size -= 1
+
+        # Determine max cloud size in the mini-batches
+        max_num_points = []
+        len_points=[]
+        for i, data in enumerate(rasters):
+            len_points.append( len(data["points"]) )
+            if (i+1) % minibatch_size == 0:
+                max_num_points.append( max(len_points) )
+                len_points = []
+
+        if len_points:
+            max_num_points.append( max(len_points) )
+
+        mini_batches = []
+        mini_batch = {
+            "coords": [],
+            "feats": [],
+            # "semantic_labels": [],
+            # "offset_labels": [],
+            "masks_off": [],
+            "masks_pad": [],
+            "point_ids": []
         }
+        mini_batch_count = 0
+
+        for i, data in enumerate(rasters):
+            points = data["points"]
+            features = data["features"]
+            # offsets = data["offsets"]
+            # semantic_label = data["semantic_label"]
+            offset_mask = data["offset_mask"]
+            point_ids = data["point_ids"]
+
+            num_points = len(points)
+
+            # Pad the clouds to max_num_points
+            pad_size = max_num_points[ mini_batch_count ] - num_points
+
+            mini_batch["coords"].append(torch.cat([points, torch.zeros((pad_size, 3), device=points.device)], dim=0))
+            mini_batch["feats"].append(torch.cat([features, torch.zeros((pad_size, features.shape[1]), device=features.device)], dim=0))
+            # The labels and offset masks are not padded, as they are only used during loss calculation. Before the loss calculation 
+            # the padded points are filtered out, so that no padded labels are needed for them
+            # mini_batch["semantic_labels"].append(semantic_label)
+            #offset_labels.append(torch.cat([offsets, torch.zeros((pad_size, 3), device=offsets.device)], dim=0))
+            # mini_batch["offset_labels"].append(offsets)
+            mini_batch["masks_off"].append(offset_mask) 
+
+            # Create padding mask (True for real points, False for padded points). For the offset prediction just extend the mask
+            # offset_masks.append(torch.cat([offset_mask,
+            #                                torch.zeros(pad_size, dtype=torch.bool, device=offset_mask.device)], dim=0))
+            mini_batch["masks_pad"].append(torch.cat([torch.ones(num_points, dtype=torch.bool, device=points.device),
+                                        torch.zeros(pad_size, dtype=torch.bool, device=points.device)], dim=0))
+
+            # The raster point ids are also not padded, since they are irrelevant for training in the flattened case
+            mini_batch["point_ids"].append( point_ids )
+
+            if (i+1) % minibatch_size == 0:
+                # Stack the tensors of the minibatch
+                mini_batch["coords"] = torch.stack( mini_batch["coords"] ).transpose(-1,-2)
+                mini_batch["feats"] = torch.stack( mini_batch["feats"] ).transpose(-1,-2)
+                # mini_batch["semantic_labels"] = torch.cat( mini_batch["semantic_labels"], 0 ).long()
+                # mini_batch["offset_labels"] = torch.cat( mini_batch["offset_labels"], 0 ).float()
+                mini_batch["masks_off"] = torch.cat( mini_batch["masks_off"], 0 ).bool()
+                mini_batch["masks_pad"] = torch.stack( mini_batch["masks_pad"] )
+                mini_batch["point_ids"] = torch.cat( mini_batch["point_ids"], 0 ).long()
+
+                mini_batches.append( mini_batch )
+                mini_batch = {
+                    "coords": [],
+                    "feats": [],
+                    # "semantic_labels": [],
+                    # "offset_labels": [],
+                    "masks_off": [],
+                    "masks_pad": [],
+                    "point_ids": []
+                }
+
+                mini_batch_count += 1
+
+        # Process any leftover mini-batch that didn't fill a full mini-batch_size
+        if len(mini_batch["coords"]) > 0:
+            mini_batch["coords"] = torch.stack(mini_batch["coords"]).transpose(-1, -2)
+            mini_batch["feats"] = torch.stack(mini_batch["feats"]).transpose(-1, -2)
+            # mini_batch["semantic_labels"] = torch.cat(mini_batch["semantic_labels"], 0).long()
+            # mini_batch["offset_labels"] = torch.cat(mini_batch["offset_labels"], 0).float()
+            mini_batch["masks_off"] = torch.cat(mini_batch["masks_off"], 0).bool()
+            mini_batch["masks_pad"] = torch.stack(mini_batch["masks_pad"])
+            mini_batch["point_ids"] = torch.cat(mini_batch["point_ids"], 0).long()
+            mini_batches.append(mini_batch)
+
+        assert len(mini_batches) == len(max_num_points)
+
+        return {"mini_batches": mini_batches, "cloud_length": batch["cloud_length"],
+                "offset_labels": batch["offset_labels"], "semantic_labels": batch["semantic_labels"]}
+
 
 
 
@@ -272,7 +372,7 @@ def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
         collate_fn=collate_fn
     )
 
-def get_rasterized_treesets_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None ):
+def get_rasterized_treesets_flattened_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None ):
     train_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'trainset.json')
     val_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'testset.json')
     with open(train_file, 'r') as f:
@@ -292,7 +392,7 @@ def get_rasterized_treesets_random_split( data_root, logger=None, data_augmentat
     
     return trainset, testset
 
-def get_rasterized_treesets_plot_split( data_root, test_plot, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None ):
+def get_rasterized_treesets_flattened_plot_split( data_root, test_plot, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None ):
     # This function uses one plot as testset and the other plots as trainset
     raster_dir = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}')
     
@@ -322,6 +422,79 @@ def get_rasterized_treesets_plot_split( data_root, test_plot, logger=None, data_
     testset = RasterizedTreeSet_Flattened( 
         data_paths_test, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance
+        )
+    
+    return trainset, testset
+
+def get_rasterized_treesets_flattened_single_sample( data_root, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None, batch_size=25 ):
+    # for overfitting
+
+    train_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'trainset.json')
+    val_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'testset.json')
+    with open(train_file, 'r') as f:
+        data_paths_train = json.load(f)
+    with open(val_file, 'r') as f:
+        data_paths_test = json.load(f)
+
+    trainset = RasterizedTreeSet_Flattened( 
+        data_paths_train[:batch_size], training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance
+        )
+    
+    testset = RasterizedTreeSet_Flattened( 
+        data_paths_train[:batch_size], training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance
+        )
+    
+    return trainset, testset
+
+def get_rasterized_treesets_hierarchical_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None, minibatch_size=20 ):
+    train_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'rasters_metadata_trainset.json')
+    val_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'rasters_metadata_testset.json')
+
+    trainset = RasterizedTreeSet_Hierarchical( 
+        train_file, training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        minibatch_size=minibatch_size
+        )
+    
+    testset = RasterizedTreeSet_Hierarchical( 
+        val_file, training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        minibatch_size=minibatch_size
+        )
+    
+    return trainset, testset
+
+def get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None, minibatch_size=20 ):
+    # This function uses one plot as testset and the other plots as trainset
+    raster_dir = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}')
+    
+    # Find all JSON files starting with "plot_"
+    json_files = [f for f in os.listdir(raster_dir) if f.startswith("rasters_metadata_plot_") and f.endswith(".json")]
+
+    json_files_train = []
+    json_files_test = []
+
+    for json_file in json_files:
+        plot_number = json_file.split("_")[3].split(".")[0]  # Extract plot number from filename
+        json_path = os.path.join(raster_dir, json_file)
+
+        if plot_number == str(test_plot):
+            json_files_test.append(json_path)  # Assign to validation set
+        else:
+            json_files_train.extend(json_path)  # Assign to training set
+
+    trainset = RasterizedTreeSet_Hierarchical( 
+        json_files_train, training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        mini_batch_size=minibatch_size
+        )
+    
+    testset = RasterizedTreeSet_Hierarchical( 
+        json_files_test, training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        mini_batch_size=minibatch_size
         )
     
     return trainset, testset

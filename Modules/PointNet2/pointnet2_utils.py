@@ -108,6 +108,7 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     # MODIFY THE USE OF N AS PLACEHOLDER TO THE POINTS OWN IDX
 
+    nsample_effective = group_idx.shape[-1]
     # Get the first neighbor index for each query point
     group_first = group_idx[:, :, 0].clone()  # [B, S]
     
@@ -121,9 +122,13 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
         group_first[mask] = nearest[mask]
     
     # Expand group_first to match the last dimension of group_idx
-    group_first_expanded = group_first.unsqueeze(-1).expand(-1, -1, nsample)
+    #group_first_expanded = group_first.unsqueeze(-1).expand(-1, -1, nsample)
+    group_first_expanded = group_first.unsqueeze(-1).expand(-1, -1, nsample_effective)
+
     # Replace all invalid indices in group_idx with the valid first neighbor index
-    group_idx[group_idx == N] = group_first_expanded[group_idx == N]
+    #group_idx[group_idx == N] = group_first_expanded[group_idx == N]
+    group_idx = torch.where(group_idx == N, group_first_expanded, group_idx)
+
 
     # group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
     # mask = group_idx == N
