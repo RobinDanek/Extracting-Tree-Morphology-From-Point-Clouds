@@ -55,6 +55,7 @@ def log_parameters(args, test_plot=None):
     logging.info(f"Hierarchical instead of flattened: {args.hierarchical}")
     if args.hierarchical:
         logging.info(f"Minibatch size: {args.minibatch_size}")
+    logging.info(f"Streaming minibatches: {args.streaming}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -84,7 +85,8 @@ def parse_args():
     parser.add_argument("--half_size", action="store_true", help="Halves the MLP channels in the model")
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--hierarchical", action="store_true")
-    parser.add_argument("--minibatch_size", type=int, default=15)
+    parser.add_argument("--minibatch_size", type=int, default=10)
+    parser.add_argument("--streaming", action="store_true")
 
     return parser.parse_args()
 
@@ -135,8 +137,12 @@ if __name__ == "__main__":
 
             print(f"\nTesting on plot number {num}\nTrainset len: {len(trainset)}\tValset len: {len(valset)}")
 
-            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
-            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
+            if args.hierarchical and args.streaming:
+                train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_streaming)
+                val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
+            else:
+                train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+                val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
 
             # Model
             model = PointNet2(
@@ -181,7 +187,8 @@ if __name__ == "__main__":
                 scheduler=scheduler,
                 early_stopper=early_stopper,
                 verbose=args.verbose,
-                raster_hierarchical=args.hierarchical
+                raster_hierarchical=args.hierarchical,
+                minibatch_streaming=args.streaming
             )
     else:
         # Setup logging
@@ -209,8 +216,12 @@ if __name__ == "__main__":
                 batch_size=args.batch_size
                 )
 
-        train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
-        val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
+        if args.hierarchical and args.streaming:
+            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_streaming)
+            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
+        else:
+            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
 
         # Model
         model = PointNet2(
@@ -255,5 +266,6 @@ if __name__ == "__main__":
             scheduler=scheduler,
             early_stopper=early_stopper,
             verbose=args.verbose,
-            raster_hierarchical=args.hierarchical
+            raster_hierarchical=args.hierarchical,
+            minibatch_streaming=args.streaming
         )

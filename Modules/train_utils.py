@@ -15,7 +15,7 @@ import logging
 from Modules.Utils import cuda_cast, EarlyStopper
 
 
-def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_hierarchical):
+def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_hierarchical, minibatch_streaming):
     """
     Perform one epoch of training.
     
@@ -44,22 +44,26 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_h
 
             # forward
             if raster_hierarchical:
-                loss, loss_dict = model.forward_hierarchical(batch, return_loss=True)
+                if minibatch_streaming:
+                    loss, loss_dict = model.forward_hierarchical_streaming(batch, return_loss=True, scaler=scaler)
+                else:
+                    loss, loss_dict = model.forward_hierarchical(batch, return_loss=True)
             else:
                 loss, loss_dict = model(batch, return_loss=True)
             for key, value in loss_dict.items():
                 losses_dict[key].append(value.detach().cpu().item())
 
         # backward
-        scaler.scale(loss*50).backward()
+        if not raster_hierarchical and not minibatch_streaming:
+            scaler.scale(loss*50).backward()
         # if config.grad_norm_clip:
         torch.nn.utils.clip_grad_norm_(model.parameters(), True, norm_type=2)
         scaler.step(optimizer)
         scaler.update()
 
         i+=1
-        if i % 1 == 0:  # Adjust frequency based on your observation
-            torch.cuda.empty_cache()
+        if i % 5 == 0:  # Adjust frequency based on your observation
+            #torch.cuda.empty_cache()
             i=0
             #print(torch.cuda.memory_summary(device=None, abbreviated=False))
             # print(f"Active memory: {torch.cuda.memory_allocated()/1e6:.2f} MB")
@@ -75,7 +79,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_h
     return loss_total, loss_off, loss_sem
 
 
-def validate(model, val_loader, epoch, mb, raster_hierarchical):
+def validate(model, val_loader, epoch, mb, raster_hierarchical, minibatch_streaming):
     """
     Perform validation and compute average loss.
     
@@ -102,14 +106,17 @@ def validate(model, val_loader, epoch, mb, raster_hierarchical):
 
                 # forward
                 if raster_hierarchical:
-                    loss, loss_dict = model.forward_hierarchical(batch, return_loss=True)
+                    if minibatch_streaming:
+                        loss, loss_dict = model.forward_hierarchical_streaming(batch, return_loss=True)
+                    else:
+                        loss, loss_dict = model.forward_hierarchical(batch, return_loss=True)
                 else:
                     loss, loss_dict = model(batch, return_loss=True)
                 for key, value in loss_dict.items():
                     losses_dict[key].append(value.detach().cpu().item())
 
             i+=1
-            if i % 1 == 0:  # Adjust frequency based on your observation
+            if i % 5 == 0:  # Adjust frequency based on your observation
                 torch.cuda.empty_cache()
                 i=0
 
@@ -129,7 +136,8 @@ def run_training(
     scheduler=None,
     early_stopper=None,
     verbose=False,
-    raster_hierarchical=False
+    raster_hierarchical=False,
+    minibatch_streaming=False
 ):
     """
     Train a model with optional learning rate scheduling and early stopping.
@@ -152,10 +160,10 @@ def run_training(
     for epoch in mb:
         mb.main_bar.comment = f"Epoch {epoch + 1}/{epochs}"
         # Training phase
-        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_hierarchical)
+        train_loss_total, train_loss_off, train_loss_sem = train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_hierarchical, minibatch_streaming)
 
         # Validation phase
-        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch, mb, raster_hierarchical)
+        val_loss_total, val_loss_off, val_loss_sem = validate(model, val_loader, epoch, mb, raster_hierarchical, minibatch_streaming)
 
         # Log losses
         log_message = (

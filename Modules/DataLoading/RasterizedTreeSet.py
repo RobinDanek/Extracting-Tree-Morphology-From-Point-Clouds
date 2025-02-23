@@ -224,13 +224,17 @@ class RasterizedTreeSet_Hierarchical(Dataset):
                 "point_ids": raster_point_ids
             })
         
-        # Return a dictionary with the full cloud and list of raster dicts
-        return {
+                # Return a dictionary with the full cloud and list of raster dicts
+        rasters_complete = {
             "rasters": rasters, 
             "cloud_length": len(data),
             "offset_labels": offsets,
             "semantic_labels": semantic_label
             }
+        # Delete the cloud because it is not needed anymore
+        del data
+
+        return rasters_complete
     
     def collate_fn(self, batch):
         """
@@ -250,6 +254,12 @@ class RasterizedTreeSet_Hierarchical(Dataset):
         minibatch_size = self.minibatch_size
         while len(rasters) % minibatch_size == 1:
             minibatch_size -= 1
+            if minibatch_size == 1:
+                minibatch_size = self.minibatch_size
+                while len(rasters) % minibatch_size == 1:
+                    minibatch_size += 1
+
+                break
 
         # Determine max cloud size in the mini-batches
         max_num_points = []
@@ -345,7 +355,74 @@ class RasterizedTreeSet_Hierarchical(Dataset):
         return {"mini_batches": mini_batches, "cloud_length": batch["cloud_length"],
                 "offset_labels": batch["offset_labels"], "semantic_labels": batch["semantic_labels"]}
 
+    # A more memory efficient way of handling mini_batches
+    def collate_fn_streaming(self, batch):
+        # Assume batch contains only one tree (as in your original design)
+        tree_data = batch[0]
+        rasters = tree_data["rasters"]
+        minibatch_size = self.minibatch_size
+        # Adjust minibatch_size as needed (preserving your current logic)
+        while len(rasters) % minibatch_size == 1 and minibatch_size > 1:
+            minibatch_size -= 1
+            if minibatch_size == 1:
+                    minibatch_size = self.minibatch_size
+                    while len(rasters) % minibatch_size == 1:
+                        minibatch_size += 1
 
+                    break
+
+        def mini_batch_generator():
+            # Process mini-batches one at a time
+            for i in range(0, len(rasters), minibatch_size):
+                group = rasters[i:i + minibatch_size]
+                # Compute the maximum number of points in this mini-batch
+                max_points = max(len(r["points"]) for r in group)
+                group_size = len(group)
+                device = group[0]["points"].device  # assume all rasters are on the same device
+
+                # Preallocate tensors for coordinates, features, and padding mask
+                coords = torch.zeros((group_size, 3, max_points), device=device)
+                feats = torch.zeros((group_size, group[0]["features"].shape[1], max_points), device=device)
+                masks_pad = torch.zeros((group_size, max_points), dtype=torch.bool, device=device)
+
+                # For tensors that are not padded, we will accumulate in a list and later concatenate.
+                masks_off_list = []
+                point_ids_list = []
+
+                for j, raster in enumerate(group):
+                    num_points = len(raster["points"])
+                    # Fill preallocated tensors:
+                    # Note: assuming raster["points"] is [N, 3]; we transpose to match shape [3, N]
+                    coords[j, :, :num_points] = raster["points"].t()
+                    feats[j, :, :num_points] = raster["features"].t()
+                    masks_pad[j, :num_points] = True
+
+                    masks_off_list.append(raster["offset_mask"])
+                    point_ids_list.append(raster["point_ids"])
+
+                # Concatenate lists for offset masks and point ids (they remain as 1D tensors)
+                masks_off = torch.cat(masks_off_list, dim=0)
+                point_ids = torch.cat(point_ids_list, dim=0)
+
+                mini_batch = {
+                    "coords": coords,        # shape: [B, 3, max_points]
+                    "feats": feats,          # shape: [B, C, max_points]
+                    "masks_pad": masks_pad,  # shape: [B, max_points]
+                    "masks_off": masks_off,  # concatenated valid mask for offsets
+                    "point_ids": point_ids   # concatenated point indices
+                }
+                mini_batch = {k: v.to('cuda', non_blocking=True) for k, v in mini_batch.items()}
+                yield mini_batch
+
+        # Instead of returning a list, we return the generator.
+        # Your training loop must then iterate over batch["mini_batches"] as:
+        #    for mini_batch in batch["mini_batches"]:
+        return {
+            "mini_batches": mini_batch_generator(),
+            "cloud_length": tree_data["cloud_length"],
+            "offset_labels": tree_data["offset_labels"],
+            "semantic_labels": tree_data["semantic_labels"]
+        }
 
 
 ########## Data Loading #########
