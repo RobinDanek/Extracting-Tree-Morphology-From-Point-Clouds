@@ -50,7 +50,7 @@ def log_parameters(args, test_plot=None):
     logging.info(f"Cross validation: {args.cross_validate}")
     if test_plot:
         logging.info(f"Test plot: {test_plot}")
-    logging.info(f"Half size: {args.half_size}")
+    logging.info(f"Depth: {args.depth}")
     logging.info(f"Overfit: {args.overfit}")
     logging.info(f"Hierarchical instead of flattened: {args.hierarchical}")
     if args.hierarchical:
@@ -82,7 +82,7 @@ def parse_args():
     parser.add_argument("--test_plots", type=int, nargs='+', help="The plots that should be used as test_plots", default=[3,4,6,8])
     parser.add_argument("--raster_size", type=float, default=2.0, help="The size of the squares used for rasterizing the clouds")
     parser.add_argument("--raster_stride", type=float, default=None, help="The stride of the raster")
-    parser.add_argument("--half_size", action="store_true", help="Halves the MLP channels in the model")
+    parser.add_argument("--depth", type=int, default=4)
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--hierarchical", action="store_true")
     parser.add_argument("--minibatch_size", type=int, default=10)
@@ -151,7 +151,7 @@ if __name__ == "__main__":
                 dim_feat=args.dim_feat,
                 use_coords=args.coords,
                 use_features=args.features,
-                half_size=args.half_size
+                depth=args.depth
             ).cuda()
 
             # Scheduler and optimizer
@@ -230,7 +230,7 @@ if __name__ == "__main__":
             dim_feat=args.dim_feat,
             use_coords=args.coords,
             use_features=args.features,
-            half_size=args.half_size
+            depth=args.depth
         ).cuda()
 
         # Scheduler and optimizer
