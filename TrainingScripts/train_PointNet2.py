@@ -5,7 +5,8 @@ from Modules.PointNet2.PointNet2 import PointNet2
 from Modules.train_utils import run_training
 from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Utils import EarlyStopper
-from timm.scheduler.cosine_lr import CosineLRScheduler
+#from timm.scheduler.cosine_lr import CosineLRScheduler
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 import argparse
 import sys
 import fastprogress
@@ -156,16 +157,21 @@ if __name__ == "__main__":
 
             # Scheduler and optimizer
             optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
-            scheduler = CosineLRScheduler(
+            # scheduler = CosineLRScheduler(
+            #     optimizer,
+            #     t_initial=args.t_initial,
+            #     lr_min=args.lr_min,
+            #     cycle_decay=1,
+            #     warmup_lr_init=0.00001,
+            #     warmup_t=args.warmup_t,
+            #     cycle_limit=1,
+            #     t_in_epochs=True,
+            # )
+            scheduler = CosineAnnealingWarmRestarts(
                 optimizer,
-                t_initial=args.t_initial,
-                lr_min=args.lr_min,
-                cycle_decay=1,
-                warmup_lr_init=0.00001,
-                warmup_t=args.warmup_t,
-                cycle_limit=1,
-                t_in_epochs=True,
-            )
+                T_0 = args.t_initial,
+                eta_min = args.lr_min
+                )
 
             # Early stopper
             early_stopper = EarlyStopper(verbose=args.verbose, patience=args.patience_es, model_save_path=new_save_path)
@@ -235,15 +241,20 @@ if __name__ == "__main__":
 
         # Scheduler and optimizer
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
-        scheduler = CosineLRScheduler(
+        # scheduler = CosineLRScheduler(
+        #     optimizer,
+        #     t_initial=args.t_initial,
+        #     lr_min=args.lr_min,
+        #     cycle_decay=1,
+        #     warmup_lr_init=0.00001,
+        #     warmup_t=args.warmup_t,
+        #     cycle_limit=1,
+        #     t_in_epochs=True,
+        # )
+        scheduler = CosineAnnealingWarmRestarts(
             optimizer,
-            t_initial=args.t_initial,
-            lr_min=args.lr_min,
-            cycle_decay=1,
-            warmup_lr_init=0.00001,
-            warmup_t=args.warmup_t,
-            cycle_limit=1,
-            t_in_epochs=True,
+            T_0 = args.t_initial,
+            eta_min = args.lr_min
         )
 
         # Early stopper

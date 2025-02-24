@@ -149,17 +149,33 @@ class RasterizedTreeSet_Flattened(Dataset):
 
 
 class RasterizedTreeSet_Hierarchical(Dataset):
-    def __init__(self, json_path, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20):
+    def __init__(self, json_paths, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20):
         """
         Args:
-            json_path (str): Path to the JSON file with tree and raster metadata.
+            json_paths (str) or list(str): Path(s) to the JSON file(s) with tree and raster metadata.
             training (bool): Whether the dataset is used for training.
             logger (optional): Logger to output info.
             data_augmentations (callable, optional): Augmentations to apply on the data.
             noise_distance (float): Threshold for valid offsets (if applicable).
         """
-        with open(json_path, 'r') as f:
-            self.data = json.load(f)
+        self.data = {}
+
+        # Ensure json_paths is a list
+        if isinstance(json_paths, str):
+            json_paths = [json_paths]
+
+        for json_path in json_paths:
+            with open(json_path, 'r') as f:
+                new_data = json.load(f)
+
+            # Merge dictionaries
+            for key, value in new_data.items():
+                if key in self.data:
+                    # If key already exists, append rasters to the list
+                    self.data[key]["rasters"].extend(value["rasters"])
+                else:
+                    self.data[key] = value  # Add new key
+
         self.tree_keys = list(self.data.keys())
         self.training = training
         self.logger = logger
@@ -560,18 +576,18 @@ def get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot, logge
         if plot_number == str(test_plot):
             json_files_test.append(json_path)  # Assign to validation set
         else:
-            json_files_train.extend(json_path)  # Assign to training set
+            json_files_train.append(json_path)  # Assign to training set
 
     trainset = RasterizedTreeSet_Hierarchical( 
         json_files_train, training=True, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        mini_batch_size=minibatch_size
+        minibatch_size=minibatch_size
         )
     
     testset = RasterizedTreeSet_Hierarchical( 
         json_files_test, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        mini_batch_size=minibatch_size
+        minibatch_size=minibatch_size
         )
     
     return trainset, testset

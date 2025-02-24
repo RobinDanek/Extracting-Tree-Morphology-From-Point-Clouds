@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export PATH=$WORK/miniforge/bin:$PATH  # Ensure local Conda is used
+# export PATH=$WORK/miniforge/bin:$PATH  # Ensure local Conda is used
 # source ~/.bashrc
 source $WORK/miniforge/etc/profile.d/conda.sh
 
@@ -10,7 +10,7 @@ conda create --prefix $WORK/$ENV_NAME python=3.9 mamba pip -c conda-forge -y
 conda activate $WORK/$ENV_NAME
 
 # conda
-mamba install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
+mamba install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -c conda-forge -y
 mamba install -c conda-forge tensorboard -y
 mamba install -c conda-forge tensorboardx -y
 mamba install -c conda-forge pandas scikit-learn jupyter tqdm munch fastprogress -y

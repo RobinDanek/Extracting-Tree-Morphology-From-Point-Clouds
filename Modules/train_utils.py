@@ -62,7 +62,7 @@ def train(model, train_loader, optimizer, scheduler, scaler, epoch, mb, raster_h
         scaler.update()
 
         i+=1
-        if i % 10 == 0:  # Adjust frequency based on your observation
+        if i % 5 == 0:  # Adjust frequency based on your observation
             torch.cuda.empty_cache()
             i=0
             #print(torch.cuda.memory_summary(device=None, abbreviated=False))
@@ -116,7 +116,7 @@ def validate(model, val_loader, epoch, mb, raster_hierarchical, minibatch_stream
                     losses_dict[key].append(value.detach().cpu().item())
 
             i+=1
-            if i % 10 == 0:  # Adjust frequency based on your observation
+            if i % 5 == 0:  # Adjust frequency based on your observation
                 torch.cuda.empty_cache()
                 i=0
 
