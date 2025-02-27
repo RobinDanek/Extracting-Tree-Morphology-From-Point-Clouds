@@ -152,7 +152,10 @@ def run_training(
         scheduler: Optional learning rate scheduler.
         early_stopper: Optional EarlyStopping instance.
     """
-    scaler = torch.amp.GradScaler('cuda', enabled=True)
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=True)
+    except AttributeError:
+        scaler = torch.cuda.amp.GradScaler(enabled=True)
     mb = master_bar(range(epochs))  # Master bar for epochs
 
     torch.autograd.set_detect_anomaly(True)

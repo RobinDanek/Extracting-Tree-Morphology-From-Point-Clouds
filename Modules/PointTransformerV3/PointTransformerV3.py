@@ -25,6 +25,7 @@ class PointTransformerWithHeads(nn.Module):
         voxel_size=0.02,
         loss_multiplier_semantic=1,
         loss_multiplier_offset=1,
+        enable_flash=False,
         **kwargs
     ):
         super().__init__()
@@ -32,9 +33,11 @@ class PointTransformerWithHeads(nn.Module):
         self.voxel_size = voxel_size
         self.loss_multiplier_semantic = loss_multiplier_semantic
         self.loss_multiplier_offset = loss_multiplier_offset
+        self.use_feats = use_feats
 
         self.backbone = PointTransformerV3(
-            in_channels = dim_feat
+            in_channels = dim_feat,
+            enable_flash = enable_flash
         )
 
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
@@ -49,7 +52,7 @@ class PointTransformerWithHeads(nn.Module):
             if isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-            elif isinstance(m, MLP):
+            elif isinstance(m, MLP_Head):
                 m.init_weights()
 
     def forward(self, batch, return_loss, **kwargs):
@@ -60,9 +63,10 @@ class PointTransformerWithHeads(nn.Module):
             feats = torch.ones_like(feats)  # Replace features with ones if use_feats is False
 
         point_dict = {
-            "coords": batch["coords"],
-            "feat": feats,
-            "grid_size": self.voxel_size
+            "coord": batch["coords"].to('cuda'),
+            "feat": feats.to('cuda'),
+            "grid_size": self.voxel_size,
+            "batch": batch["batch_ids"].to('cuda')
         }
 
         output = self.forward_backbone( point_dict )
@@ -84,7 +88,10 @@ class PointTransformerWithHeads(nn.Module):
         output = dict()
         backbone_feats = backbone_output["feat"] # Expected shape: B x N x 32
         output['backbone_feats'] = backbone_feats
-        backbone_feats = backbone_feats.permute(0, 2, 1)  # Convert B x N x C -> B x C x N
+        # if backbone_feats.dim() == 2:
+        #     backbone_feats = backbone_feats.unsqueeze(0)  # Now shape becomes (1, N, C)
+        # backbone_feats = backbone_feats.permute(0, 2, 1)  # Convert B x N x C -> B x C x N
+        backbone_feats = backbone_feats.permute(0, 1)
 
         output['semantic_prediction_logits'] = self.semantic_linear(backbone_feats)  # (B, 2, N)
         output['offset_predictions'] = self.offset_linear(backbone_feats)  # (B, 3, N)
@@ -126,7 +133,7 @@ class PointTransformerV3(PointModule):
         pre_norm=True,
         shuffle_orders=True,
         enable_rpe=False,
-        enable_flash=True,
+        enable_flash=False,
         upcast_attention=False,
         upcast_softmax=False,
         cls_mode=False,
