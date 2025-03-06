@@ -420,7 +420,7 @@ class RasterizedTreeSet_Hierarchical(Dataset):
                 masks_off = torch.cat(masks_off_list, dim=0)
                 point_ids = torch.cat(point_ids_list, dim=0)
                 # Create batch_ids for each raster: shape [group_size, max_points]
-                batch_ids = torch.arange(group_size, device=device).unsqueeze(1).expand(group_size, max_points).flatten()
+                # batch_ids = torch.arange(group_size, device=device).unsqueeze(1).expand(group_size, max_points).flatten()
 
                 mini_batch = {
                     "coords": coords,        # shape: [B, 3, max_points]
@@ -428,7 +428,7 @@ class RasterizedTreeSet_Hierarchical(Dataset):
                     "masks_pad": masks_pad,  # shape: [B, max_points]
                     "masks_off": masks_off,  # concatenated valid mask for offsets
                     "point_ids": point_ids,  # concatenated point indices
-                    "batch_ids": batch_ids   # Batch IDs for each point (dtype: long)
+                    # "batch_ids": batch_ids   # Batch IDs for each point (dtype: long)
                 }
                 mini_batch = {k: v.to('cuda', non_blocking=True) for k, v in mini_batch.items()}
                 yield mini_batch
