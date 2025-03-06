@@ -18,14 +18,14 @@ def parse_args():
 
 def perform_test(offset_model, noise_model):
 
-    plot_savedir = os.path.join( 'plots', 'ModelEvaluation', f'TreeLearn_{offset_model}_{noise_model}' )
+    plot_savedir = os.path.join( 'plots', 'ModelEvaluation', f'PointNet2_{offset_model}_{noise_model}' )
 
-    offset_model_dir = os.path.join( 'ModelSaves', 'TreeLearn', f'{offset_model}' )
-    noise_model_dir = os.path.join( 'ModelSaves', 'TreeLearn', f'{noise_model}' )
+    offset_model_dir = os.path.join( 'ModelSaves', 'PointNet2', f'{offset_model}' )
+    noise_model_dir = os.path.join( 'ModelSaves', 'PointNet2', f'{noise_model}' )
 
-    model_dict = load_model(model_type="treelearn", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
+    model_dict = load_model(model_type="pointnet2", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
 
-    nn_eval(model_dict, rasterized_data=False, plot_savedir=plot_savedir)
+    nn_eval(model_dict, rasterized_data=True, plot_savedir=plot_savedir)
 
 if __name__ == "__main__":
 

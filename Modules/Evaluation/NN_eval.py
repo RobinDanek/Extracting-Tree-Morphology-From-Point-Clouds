@@ -6,6 +6,7 @@ from Modules.PointTransformerV3.PointTransformerV3 import PointTransformerWithHe
 from Modules.TreeLearn.TreeLearn import TreeLearn
 from Modules.DataLoading.TreeSet import *
 from Modules.DataLoading.RasterizedTreeSet import *
+from Modules.Evaluation.ModelLoaders import load_model
 
 import pandas as pd
 import numpy as np
@@ -18,9 +19,9 @@ def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
 
     # First calculate the knns of the original and the transformed clouds
     if not rasterized_data:
-        nnd_orig, nnd_pred = makePredictionsWholeTree
+        nnd_orig, nnd_pred = makePredictionsWholeTree(model_dict)
     else:
-        nnd_orig, nnd_pred = makePredictionsRasterized
+        nnd_orig, nnd_pred = makePredictionsRasterized(model_dict)
 
     plot_savepath=None
     if plot_savedir:
