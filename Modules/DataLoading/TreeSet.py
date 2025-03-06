@@ -8,7 +8,7 @@ import json
 from collections import defaultdict
 
 class TreeSet(Dataset):
-    def __init__(self, data_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
+    def __init__(self, json_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -22,8 +22,19 @@ class TreeSet(Dataset):
         """
         # Main dataset paths
         # self.data_paths = [os.path.join(data_root, path) for path in os.listdir(data_root) if path.endswith('.npy')]
-        self.data_paths = data_paths
-        self.data_dict = {os.path.basename(path): path for path in self.data_paths}
+        self.data_paths = []
+
+        # Ensure json_paths is a list
+        if isinstance(json_paths, str):
+            json_paths = [json_paths]
+
+        for json_path in json_paths:
+            with open(json_path, 'r') as f:
+                new_data = json.load(f)
+
+            # Merge paths
+            for data_path in new_data:
+                self.data_paths.append( data_path )
         
         # Noise dataset paths (optional)
         self.noise_root = noise_root
@@ -297,19 +308,15 @@ def get_treesets_random_split( data_root, logger=None, data_augmentations=None, 
     # This function returns the training and testset created by random picking of clouds
     train_file = os.path.join(data_root, 'trainset.json')
     val_file = os.path.join(data_root, 'testset.json')
-    with open(train_file, 'r') as f:
-        data_paths_train = json.load(f)
-    with open(val_file, 'r') as f:
-        data_paths_test = json.load(f)
 
     trainset = TreeSet( 
-        data_paths_train, training=True, logger=logger, 
+        train_file, training=True, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
         noise_root=noise_root, min_height=min_height 
         )
     
     testset = TreeSet( 
-        data_paths_test, training=False, logger=logger, 
+        val_file, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
         noise_root=noise_root, min_height=min_height 
         )
@@ -335,13 +342,13 @@ def get_treesets_plot_split( data_root, test_plot, logger=None, data_augmentatio
             json_files_train.append(json_path)  # Assign to training set
 
     trainset = TreeSet( 
-        data_paths_train, training=True, logger=logger, 
+        json_files_train, training=True, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
         noise_root=noise_root, min_height=min_height 
         )
     
     testset = TreeSet( 
-        data_paths_test, training=False, logger=logger, 
+        json_files_test, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
         noise_root=noise_root, min_height=min_height 
         )
