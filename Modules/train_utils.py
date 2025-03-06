@@ -102,7 +102,7 @@ def validate(model, val_loader, epoch, mb, raster_hierarchical, minibatch_stream
         i=0
         for batch in pb:
 
-            with torch.amp.autocast('cuda', enabled=True):
+            with torch.amp.autocast('cuda', enabled=False):
 
                 # forward
                 if raster_hierarchical:

@@ -26,6 +26,7 @@ class PointTransformerWithHeads(nn.Module):
         loss_multiplier_semantic=1,
         loss_multiplier_offset=1,
         enable_flash=False,
+        optional_autocast=True,
         **kwargs
     ):
         super().__init__()
@@ -34,6 +35,7 @@ class PointTransformerWithHeads(nn.Module):
         self.loss_multiplier_semantic = loss_multiplier_semantic
         self.loss_multiplier_offset = loss_multiplier_offset
         self.use_feats = use_feats
+        self.optional_autocast = optional_autocast
 
         self.backbone = PointTransformerV3(
             in_channels = dim_feat,
@@ -43,8 +45,8 @@ class PointTransformerWithHeads(nn.Module):
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
         
         # head
-        self.semantic_linear = MLP_Head(32, 2, norm_fn=norm_fn, num_layers=2)
-        self.offset_linear = MLP_Head(32, 3, norm_fn=norm_fn, num_layers=2)
+        self.semantic_linear = MLP_Head(64, 2, norm_fn=norm_fn, num_layers=2)
+        self.offset_linear = MLP_Head(64, 3, norm_fn=norm_fn, num_layers=2)
         self.init_weights()
 
     def init_weights(self):
@@ -102,6 +104,153 @@ class PointTransformerWithHeads(nn.Module):
         loss_dict = dict()
         semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(), model_output['offset_predictions'][masks_off].float(), 
                                                             semantic_labels, offset_labels[masks_off])
+        loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
+        loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
+
+        loss = sum(_value for _value in loss_dict.values())
+        return loss, loss_dict
+
+    def forward_hierarchical_streaming(self, batch, return_loss, scaler=None):
+        """
+        Processes a tree (composed of multiple mini‐batches) in a streaming manner.
+        
+        When return_loss is True, computes a loss for each mini‐batch (by masking the global labels with
+        the mini‐batch’s point IDs) and backpropagates it immediately, thereby releasing its computation graph.
+        In all cases, it aggregates predictions over the whole tree so that inference can be performed.
+        
+        Returns:
+            If return_loss is True: a tuple (avg_loss, output) where output is a dict with aggregated predictions.
+            Otherwise, returns the output dict with aggregated predictions only.
+        """
+        # Preallocate global tensors for prediction aggregation.
+        cloud_length = batch["cloud_length"]
+        device = "cuda"  # adjust if using a different device
+
+        avg_off_predictions = torch.zeros((cloud_length, 3), dtype=torch.float, device=device)
+        avg_sem_predictions = torch.zeros((cloud_length, 2), dtype=torch.float, device=device)
+        count_predictions_sem = torch.zeros((cloud_length, 1), dtype=torch.float, device=device)
+        count_predictions_off = torch.zeros((cloud_length, 1), dtype=torch.float, device=device)
+
+        total_loss = 0.0
+        loss_dict = {"offset_loss": 0, "semantic_loss": 0}
+
+        num_minibatches = 0
+
+
+        # Iterate over mini‐batches using the streaming generator.
+        for mini_batch in batch["mini_batches"]:
+            # Retrieve necessary tensors.
+
+            # Extract features and points and put them into point_dict
+            feats = mini_batch["feats"]
+            if not self.use_feats:
+                feats = torch.ones_like(feats)  # Replace features with ones if use_feats is False
+
+            point_dict = {
+                "coord": mini_batch["coords"].to('cuda'),
+                "feat": feats.to('cuda'),
+                "grid_size": self.voxel_size,
+                "batch": mini_batch["batch_ids"].to('cuda')
+            }
+
+            point_ids = mini_batch["point_ids"]      # 1D tensor indexing the global cloud for semantic predictions.
+            mask_off  = mini_batch["masks_off"]        # Boolean mask for offset predictions.
+            masks_pad = mini_batch["masks_pad"]         # Boolean mask indicating real (non-padded) points.
+
+            # Backbone pass.
+            backbone_feats = self.forward_backbone(
+                point_dict
+            )
+            backbone_feats = backbone_feats.permute(0, 1)
+
+            # Head pass (with autocast disabled).
+            with torch.amp.autocast('cuda', enabled=self.optional_autocast):
+                sem_pred_logits = self.semantic_linear(backbone_feats)
+                off_preds = self.offset_linear(backbone_feats)
+
+            # Reshape predictions.
+            # Expected shapes:
+            #   sem_pred_logits: [B, C, max_points] and off_preds: [B, 3, max_points]
+            sem_logits_flat = sem_pred_logits.permute(0, 2, 1).reshape(-1, 2)
+            off_preds_flat   = off_preds.permute(0, 2, 1).reshape(-1, 3)
+
+            # Use the padding mask to select valid predictions.
+            mask_flat = masks_pad.reshape(-1)
+            sem_logits_valid = sem_logits_flat[mask_flat]  # [N_valid, 2]
+            off_preds_valid  = off_preds_flat[mask_flat]     # [N_valid, 3]
+
+            # Further apply the offset mask.
+            off_preds_valid = off_preds_valid[mask_off]
+            point_ids_off = point_ids[mask_off]
+
+            # Scatter the mini‐batch predictions into the global aggregates.
+            # Here we assume mini_batch["point_ids"] has length equal to sem_logits_valid.
+            avg_sem_predictions[point_ids] += sem_logits_valid.detach()
+            avg_off_predictions[point_ids_off] += off_preds_valid.detach()
+
+            count_predictions_sem[point_ids] += 1
+            count_predictions_off[point_ids_off] += 1
+
+            # If training (loss should be computed), calculate the loss for this mini‐batch.
+            if return_loss:
+                # For semantic predictions, mask the global semantic labels with the mini‐batch indices.
+                mini_sem_labels = batch["semantic_labels"].squeeze()[point_ids.cpu()].to(device)
+                mini_off_labels = batch["offset_labels"][point_ids_off.cpu()].to(device)
+
+                mini_loss, mini_loss_dict = self.get_loss_hierarchical(
+                    model_output={
+                        "semantic_prediction_logits": sem_logits_valid,
+                        "offset_predictions": off_preds_valid
+                    },
+                    semantic_labels=mini_sem_labels,
+                    offset_labels=mini_off_labels,
+                    n_points=None  # Use all points in the mini‐batch.
+                )
+
+                # Backpropagate immediately to release the mini‐batch graph.
+                if scaler:
+                    scaler.scale(mini_loss*50).backward()
+
+                loss_dict["offset_loss"] += mini_loss_dict["offset_loss"]
+                loss_dict["semantic_loss"] += mini_loss_dict["semantic_loss"]
+
+                total_loss += mini_loss.item()
+                num_minibatches += 1
+
+            # Delete local variables from this iteration to help free memory.
+            del backbone_feats, sem_pred_logits, off_preds, sem_logits_flat, off_preds_flat, mask_flat, sem_logits_valid, off_preds_valid
+            del mini_batch  # Remove reference to the mini-batch dictionary
+            # Optionally, call: torch.cuda.empty_cache()
+
+        # After processing all mini‐batches, average the aggregated predictions.
+        nonzero_mask_sem = count_predictions_sem.squeeze(1) > 0
+        nonzero_mask_off = count_predictions_off.squeeze(1) > 0
+        avg_sem_predictions[nonzero_mask_sem] /= count_predictions_sem[nonzero_mask_sem]
+        avg_off_predictions[nonzero_mask_off] /= count_predictions_off[nonzero_mask_off]
+
+        output = {
+            "semantic_prediction_logits": avg_sem_predictions,
+            "offset_predictions": avg_off_predictions
+        }
+
+        if return_loss:
+            avg_loss = total_loss / num_minibatches if num_minibatches > 0 else 0.0
+            loss_dict["offset_loss"] /= num_minibatches if num_minibatches > 0 else 0.0
+            loss_dict["semantic_loss"] /= num_minibatches if num_minibatches > 0 else 0.0
+
+            return avg_loss, loss_dict
+        else:
+            return output
+
+    def get_loss_hierarchical(self, model_output, semantic_labels, offset_labels, **kwargs):
+
+        loss_dict = dict()
+
+        semantic_loss, offset_loss = point_wise_loss(model_output['semantic_prediction_logits'].float(),
+                                              model_output['offset_predictions'].float(),
+                                              semantic_labels,
+                                              offset_labels)
+
         loss_dict['semantic_loss'] = semantic_loss * self.loss_multiplier_semantic
         loss_dict['offset_loss'] = offset_loss * self.loss_multiplier_offset
 

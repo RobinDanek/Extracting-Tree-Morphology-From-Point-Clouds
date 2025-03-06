@@ -4,6 +4,7 @@ import torch
 import os
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+import json
 from collections import defaultdict
 
 class TreeSet(Dataset):
@@ -294,8 +295,12 @@ def get_dataloader(dataset, batch_size, num_workers, training, collate_fn):
 
 def get_treesets_random_split( data_root, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8 ):
     # This function returns the training and testset created by random picking of clouds
-    data_paths_train = [os.path.join(data_root, 'trainset', path) for path in os.listdir(os.path.join(data_root, 'trainset')) if path.endswith('.npy')]
-    data_paths_test = [os.path.join(data_root, 'testset', path) for path in os.listdir(os.path.join(data_root, 'testset')) if path.endswith('.npy')]
+    train_file = os.path.join(data_root, 'trainset.json')
+    val_file = os.path.join(data_root, 'testset.json')
+    with open(train_file, 'r') as f:
+        data_paths_train = json.load(f)
+    with open(val_file, 'r') as f:
+        data_paths_test = json.load(f)
 
     trainset = TreeSet( 
         data_paths_train, training=True, logger=logger, 
@@ -314,26 +319,20 @@ def get_treesets_random_split( data_root, logger=None, data_augmentations=None, 
 
 def get_treesets_plot_split( data_root, test_plot, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8 ):
     # This function uses one plot as testset and the other plots as trainset
-    files = [os.path.join(data_root, 'cloud', f) for f in os.listdir( os.path.join(data_root, 'cloud') ) if f.endswith('.npy')]
-    filenames = [f for f in os.listdir( os.path.join(data_root, 'cloud') ) if f.endswith('.npy')]
+    # Find all JSON files starting with "plot_"
+    json_files = [f for f in os.listdir(data_root) if f.startswith("plot_") and f.endswith(".json")]
 
-    grouped_files = defaultdict(list)
-    unique_numbers = []
-    for f, fn in zip(files, filenames):
-        # Extract the first number from the filename
-        number = fn[0]  # Get the first number (e.g., 83, 81, 85)
-        grouped_files[number].append(f)
-        if number not in unique_numbers:
-            unique_numbers.append( number )
+    json_files_train = []
+    json_files_test = []
 
-    data_paths_train = []
-    data_paths_test = []
+    for json_file in json_files:
+        plot_number = json_file.split("_")[1].split(".")[0]  # Extract plot number from filename
+        json_path = os.path.join(data_root, json_file)
 
-    for number in unique_numbers:
-        if number != f'{test_plot}':
-            data_paths_train.extend( grouped_files[number] )
+        if plot_number == str(test_plot):
+            json_files_test.append(json_path)  # Assign to validation set
         else:
-            data_paths_test = grouped_files[number]
+            json_files_train.append(json_path)  # Assign to training set
 
     trainset = TreeSet( 
         data_paths_train, training=True, logger=logger, 

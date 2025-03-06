@@ -26,7 +26,7 @@ def rasterize(data_dir, eval_dir, raster_size=2.0, stride=None, overwrite=False,
     
     os.makedirs(eval_dir, exist_ok=True)
     json_path = os.path.join(eval_dir, 'rasters_metadata.json')
-    data_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npy')]
+    data_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('labeled.npy')]
 
     print(f"Starting raserization with raster size of {raster_size} and stride of {stride}")
     num_rasters = 0

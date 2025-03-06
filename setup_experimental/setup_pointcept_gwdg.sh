@@ -1,5 +1,6 @@
 #!/bin/bash
 
+module load cuda/11.8.0
 export PATH=$WORK/miniforge/bin:$PATH  # Ensure local Conda is used
 # source ~/.bashrc
 source $WORK/miniforge/etc/profile.d/conda.sh

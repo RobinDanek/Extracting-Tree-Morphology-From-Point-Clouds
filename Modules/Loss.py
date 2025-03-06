@@ -27,6 +27,10 @@ def point_wise_loss(semantic_prediction_logits, offset_predictions, semantic_lab
     else:
         # offset loss
         offset_losses = (offset_predictions[ind_off] - offset_labels[ind_off]).pow(2).sum(1).sqrt()
+        # Clamp for stability
+        eps = 1e-8
+        offset_losses = torch.sqrt(torch.clamp(offset_losses, min=eps))
+
         offset_loss = offset_losses.mean()
 
     return semantic_loss, offset_loss

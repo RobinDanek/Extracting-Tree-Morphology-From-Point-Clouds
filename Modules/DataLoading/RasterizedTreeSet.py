@@ -419,13 +419,16 @@ class RasterizedTreeSet_Hierarchical(Dataset):
                 # Concatenate lists for offset masks and point ids (they remain as 1D tensors)
                 masks_off = torch.cat(masks_off_list, dim=0)
                 point_ids = torch.cat(point_ids_list, dim=0)
+                # Create batch_ids for each raster: shape [group_size, max_points]
+                batch_ids = torch.arange(group_size, device=device).unsqueeze(1).expand(group_size, max_points).flatten()
 
                 mini_batch = {
                     "coords": coords,        # shape: [B, 3, max_points]
                     "feats": feats,          # shape: [B, C, max_points]
                     "masks_pad": masks_pad,  # shape: [B, max_points]
                     "masks_off": masks_off,  # concatenated valid mask for offsets
-                    "point_ids": point_ids   # concatenated point indices
+                    "point_ids": point_ids,  # concatenated point indices
+                    "batch_ids": batch_ids   # Batch IDs for each point (dtype: long)
                 }
                 mini_batch = {k: v.to('cuda', non_blocking=True) for k, v in mini_batch.items()}
                 yield mini_batch
@@ -503,9 +506,9 @@ def get_rasterized_treesets_flattened_plot_split( data_root, test_plot, logger=N
             file_paths = json.load(f)  # Load the list of paths from JSON
 
         if plot_number == str(test_plot):
-            data_paths_test.extend(file_paths)  # Assign to validation set
+            data_paths_test.append(file_paths)  # Assign to validation set
         else:
-            data_paths_train.extend(file_paths)  # Assign to training set
+            data_paths_train.append(file_paths)  # Assign to training set
 
     trainset = RasterizedTreeSet_Flattened( 
         data_paths_train, training=True, logger=logger, 

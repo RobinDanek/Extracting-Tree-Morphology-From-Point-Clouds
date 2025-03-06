@@ -37,8 +37,8 @@ def split_dataset(data_dir, eval_dir, test_size=0.15, random_state=42, raster_me
         ######## FIRST THE RANDOM SPLIT #########
 
         # Get all .npy files in the data directory
-        file_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npy')]
-        file_names = [f for f in os.listdir(data_dir) if f.endswith('.npy')]
+        file_paths = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('labeled.npy')]
+        file_names = [f for f in os.listdir(data_dir) if f.endswith('labeled.npy')]
 
         # Split into train and test sets
         train_file_paths, test_file_paths = train_test_split(file_paths, test_size=test_size, random_state=random_state)

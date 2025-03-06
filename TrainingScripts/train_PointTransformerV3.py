@@ -4,6 +4,7 @@ import os
 from Modules.PointTransformerV3.PointTransformerV3 import PointTransformerWithHeads
 from Modules.train_utils import run_training
 from Modules.DataLoading.TreeSet import TreeSet, get_dataloader, get_treesets_plot_split, get_treesets_random_split
+from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Utils import EarlyStopper
 from timm.scheduler.cosine_lr import CosineLRScheduler
 import argparse
@@ -50,6 +51,13 @@ def log_parameters(args, test_plot=None):
     logging.info(f"Cross validation: {args.cross_validate}")
     if test_plot:
         logging.info(f"Test plot: {test_plot}")
+    logging.info(f"Hierarchical instead of flattened: {args.hierarchical}")
+    if args.hierarchical:
+        logging.info(f"Minibatch size: {args.minibatch_size}")
+    logging.info(f"Streaming minibatches: {args.streaming}")
+    logging.info(f"Rasterized clouds: {args.rasterized}")
+    logging.info(f"Raster size: {args.raster_size}")
+    logging.info(f"Raster stride: {args.raster_stride}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -59,7 +67,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=1000, help="Number of epochs for training")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for the optimizer")
     parser.add_argument("--voxel_size", type=float, default=0.02, help="Voxel size for the model")
-    parser.add_argument("--patience_es", type=int, default=25, help="Patience for early stopping")
+    parser.add_argument("--patience_es", type=int, default=10, help="Patience for early stopping")
     parser.add_argument("--warmup_t", type=int, default=20, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
@@ -74,14 +82,18 @@ def parse_args():
     parser.add_argument("--off_loss_mult", type=float, default=1.0, help="Weighting factor of offset loss")
     parser.add_argument("--cross_validate", action="store_true", help="Train models for cross validation across plots")
     parser.add_argument("--test_plots", type=int, nargs='+', help="The plots that should be used as test_plots", default=[3,4,6,8])
+    parser.add_argument("--rasterized", action="store_true")
+    parser.add_argument("--raster_size", type=float, default=2.0, help="The size of the squares used for rasterizing the clouds")
+    parser.add_argument("--raster_stride", type=float, default=None, help="The stride of the raster")
+    parser.add_argument("--hierarchical", action="store_true")
+    parser.add_argument("--minibatch_size", type=int, default=10)
+    parser.add_argument("--streaming", action="store_true")
+    parser.add_argument("--disable_flash", action="store_false")
 
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-
-    # Setup logging
-    setup_logging(args.model_save_path)
     
     ###### Define parameters #######
     batch_size = args.batch_size
@@ -114,12 +126,33 @@ if __name__ == "__main__":
             setup_logging(new_save_path)
             log_parameters(args, num)
 
-            trainset, valset = get_treesets_plot_split(data_root, test_plot=num, noise_distance=args.noise_threshold)
+            if args.rasterized:
+                if args.hierarchical:
+                    trainset, valset = get_rasterized_treesets_hierarchical_plot_split(
+                        data_root, test_plot=num, noise_distance=args.noise_threshold,
+                        raster_size=args.raster_size, stride=args.raster_stride,
+                        minibatch_size=args.minibatch_size
+                    )
+                else:
+                    trainset, valset = get_rasterized_treesets_flattened_plot_split(
+                        data_root, test_plot=num, noise_distance=args.noise_threshold,
+                        raster_size=args.raster_size, stride=args.raster_stride
+                    )
+            else:
+                trainset, valset = get_treesets_plot_split(data_root, test_plot=num, noise_distance=args.noise_threshold)
 
             print(f"\nTesting on plot number {num}\nTrainset len: {len(trainset)}\tValset len: {len(valset)}")
 
-            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_voxel)
-            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
+            if args.rasterized:
+                if args.hierarchical and args.streaming:
+                    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_streaming)
+                    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
+                else:
+                    train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+                    val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
+            else:
+                train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_voxel)
+                val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
 
             # spatial shape =  [30m,30m,50m], depends on voxel size
             # spatial_shape = [ 
@@ -131,7 +164,8 @@ if __name__ == "__main__":
             # Model
             model = PointTransformerWithHeads(
                 dim_feat=args.dim_feat, use_feats=args.features, voxel_size=args.voxel_size, 
-                loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult
+                loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult,
+                enable_flash=args.disable_flash
                 ).cuda()
 
             # Scheduler and optimizer
@@ -166,7 +200,9 @@ if __name__ == "__main__":
                 epochs=epochs,
                 scheduler=scheduler,
                 early_stopper=early_stopper,
-                verbose=args.verbose
+                verbose=args.verbose,
+                raster_hierarchical=args.hierarchical,
+                minibatch_streaming=args.streaming
             )
 
     ####### RANDOM TESTSET PART #########
@@ -178,15 +214,37 @@ if __name__ == "__main__":
         # Log parameters
         log_parameters(args)
 
-        trainset, valset = get_treesets_random_split(data_root, noise_distance=args.noise_threshold)
+        if args.rasterized:
+            if args.hierarchical:
+                trainset, valset = get_rasterized_treesets_hierarchical_random_split(
+                    data_root, noise_distance=args.noise_threshold,
+                    raster_size=args.raster_size, stride=args.raster_stride,
+                    minibatch_size=args.minibatch_size
+                )
+            else:
+                trainset, valset = get_rasterized_treesets_flattened_random_split(
+                    data_root, noise_distance=args.noise_threshold,
+                    raster_size=args.raster_size, stride=args.raster_stride
+                    )
+        else:
+            trainset, valset = get_treesets_random_split(data_root, noise_distance=args.noise_threshold)
 
-        train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_voxel)
-        val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
+        if args.rasterized:
+            if args.hierarchical and args.streaming:
+                train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_streaming)
+                val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
+            else:
+                train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn)
+                val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn)
+        else:
+            train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_voxel)
+            val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
 
         # Model
         model = PointTransformerWithHeads(
             dim_feat=args.dim_feat, use_feats=args.features, voxel_size=args.voxel_size, 
-            loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult
+            loss_multiplier_semantic=args.sem_loss_mult, loss_multiplier_offset=args.off_loss_mult,
+            enable_flash=args.disable_flash
             ).cuda()
 
         # Scheduler and optimizer
@@ -221,5 +279,7 @@ if __name__ == "__main__":
             epochs=epochs,
             scheduler=scheduler,
             early_stopper=early_stopper,
-            verbose=args.verbose
+            verbose=args.verbose,
+            raster_hierarchical=args.hierarchical,
+            minibatch_streaming=args.streaming
         )
