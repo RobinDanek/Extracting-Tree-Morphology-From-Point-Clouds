@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 
-from Modules.PointNet2.PointNet2 import PointNet2
-from Modules.PointTransformerV3.PointTransformerV3 import PointTransformerWithHeads
-from Modules.TreeLearn.TreeLearn import TreeLearn
 from Modules.DataLoading.TreeSet import *
 from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Evaluation.ModelLoaders import load_model
@@ -14,6 +11,7 @@ import json
 from scipy.spatial import cKDTree
 from scipy import stats
 from scipy.optimize import curve_fit
+from fastprogress.fastprogress import master_bar, progress_bar
 
 def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
 
@@ -52,12 +50,13 @@ def makePredictionsWholeTree(model_dict):
     plot_loaders = [plot_3_loader, plot_4_loader, plot_6_loader, plot_8_loader]
     plots = [3,4,6,8]
 
+    print("Starting nearest neighbour calculations")
     for plot, plot_loader in zip(plots, plot_loaders):
 
         model = model_dict[f"O_P{plot}"]
         model = model.cuda()
 
-        for tree in plot_loader:
+        for tree in progress_bar(plot_loader, master_bar=None):
             coords = tree["coords"].numpy()
 
             # Calculate original distances
@@ -70,6 +69,8 @@ def makePredictionsWholeTree(model_dict):
             offset_predictions = output["offset_predictions"].cpu().numpy()
 
             nnd_pred.extend( nearestNeighbourDistances( coords[0] + offset_predictions, k=1 ).tolist() )
+
+        print(f"Finished plot {plot}")
 
     return nnd_orig, nnd_pred
 
@@ -211,6 +212,8 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
     import numpy as np
     import matplotlib.pyplot as plt
     from scipy.stats import binned_statistic
+
+    print("Plotting...")
 
     # Convert to numpy arrays
     nnd_orig = np.array(nnd_orig)

@@ -2,7 +2,6 @@ from functools import partial
 import torch
 import torch.nn as nn
 import spconv.pytorch as spconv
-from timm.models.layers import DropPath
 from collections import OrderedDict
 import functools
 
