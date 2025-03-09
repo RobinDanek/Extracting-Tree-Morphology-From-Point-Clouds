@@ -56,6 +56,7 @@ class TreeLearn(nn.Module):
         self.output_layer = spconv.SparseSequential(norm_fn(channels), nn.ReLU())
         
         # head
+        
         self.semantic_linear = MLP(channels, 2, norm_fn=norm_fn, num_layers=2)
         self.offset_linear = MLP(channels, 3, norm_fn=norm_fn, num_layers=2)
         self.init_weights()

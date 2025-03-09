@@ -42,10 +42,10 @@ def makePredictionsWholeTree(model_dict):
     _, data_plot_6 = get_treesets_plot_split(data_root, test_plot=6, noise_distance=0.1)
     _, data_plot_8 = get_treesets_plot_split(data_root, test_plot=8, noise_distance=0.1)
 
-    plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_4_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_6_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_8_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
+    plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=data_plot_3.collate_fn_voxel)
+    plot_4_loader = get_dataloader(data_plot_4, 1, num_workers=0, training=False, collate_fn=data_plot_4.collate_fn_voxel)
+    plot_6_loader = get_dataloader(data_plot_6, 1, num_workers=0, training=False, collate_fn=data_plot_6.collate_fn_voxel)
+    plot_8_loader = get_dataloader(data_plot_8, 1, num_workers=0, training=False, collate_fn=data_plot_8.collate_fn_voxel)
 
     plot_loaders = [plot_3_loader, plot_4_loader, plot_6_loader, plot_8_loader]
     plots = [3,4,6,8]
@@ -56,11 +56,15 @@ def makePredictionsWholeTree(model_dict):
         model = model_dict[f"O_P{plot}"]
         model = model.cuda()
 
-        for tree in progress_bar(plot_loader, master_bar=None):
+        for tree in progress_bar(plot_loader, master=None):
             coords = tree["coords"].numpy()
 
+            nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
+            if np.isnan(nnd_orig_tree).any():
+                raise ValueError("nnd_orig contains NaN values")
+
             # Calculate original distances
-            nnd_orig.extend( nearestNeighbourDistances(coords[0], k=1).tolist() )
+            nnd_orig.extend( nnd_orig_tree.tolist() )
 
             # Make predictions
             with torch.no_grad():
@@ -68,7 +72,11 @@ def makePredictionsWholeTree(model_dict):
 
             offset_predictions = output["offset_predictions"].cpu().numpy()
 
-            nnd_pred.extend( nearestNeighbourDistances( coords[0] + offset_predictions, k=1 ).tolist() )
+            nnd_pred_tree = nearestNeighbourDistances( coords + offset_predictions, k=1 )[1]
+            if np.isnan(nnd_pred_tree).any():
+                raise ValueError("nnd_pred contains NaN values")
+
+            nnd_pred.extend( nnd_pred_tree.tolist() )
 
         print(f"Finished plot {plot}")
 
@@ -181,8 +189,9 @@ def fit_power_law(x, y):
         a_err (float): Standard error of 'a'.
         b_err (float): Standard error of 'b'.
     """
-    log_x = np.log(x)
-    log_y = np.log(y)
+    epsilon = 1e-4 # For numerical stability
+    log_x = np.log(x + epsilon)
+    log_y = np.log(y + epsilon)
 
     # Fit the power-law model in log-log space
     popt, pcov = curve_fit(lambda log_x, log_a, b: log_a + b * log_x, log_x, log_y)
@@ -241,7 +250,7 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
         return bins
 
     # Generate bins based on the range of original distances
-    bins = generate_log_bins(np.min(nnd_orig), np.max(nnd_orig))
+    bins = generate_log_bins(np.min(nnd_orig) + 1e-4, np.max(nnd_orig))
 
     # Compute binned statistics: means and standard deviations of transformed distances.
     bin_means, bin_edges, _ = binned_statistic(nnd_orig, nnd_pred, statistic='mean', bins=bins)
@@ -249,13 +258,19 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
     # Use the geometric mean of the bin edges as the center for each bin.
     bin_centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
 
+    # Add bisector line (black dashed) for reference: y = x.
+    x_bis = np.linspace(np.min(nnd_orig) + 1e-4, np.max(nnd_orig), 100)
+
     # Create the plot
     plt.figure(figsize=(8, 6))
     plt.xscale('log')
     plt.yscale('log')
-    plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
+    #plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
     plt.errorbar(bin_centers, bin_means, yerr=bin_stds, fmt='o', color='red', label='Binned Mean')
-    plt.plot(x_fit, y_fit, color='black', linestyle='--', label=f'Fit: y = {a:.2f}x^{b:.2f}')
+    plt.plot(x_fit, y_fit, color='blue', label=r"$y = ax^b$" + 
+                   f"\n$a = {a:.3f} \pm {a_err:.3f}$" + 
+                   f"\n$b = {b:.3f} \pm {b_err:.3f}$")
+    plt.plot(x_bis, x_bis, 'k--')
     plt.xlabel('Original NN Distance')
     plt.ylabel('Transformed NN Distance')
     plt.title('Double Logarithmic NN Distance Comparison')

@@ -45,7 +45,7 @@ def load_treelearn(offset_model_dir, noise_model_dir, num_blocks=3, use_feats=Tr
         model_dict[f"O_{plot}"] = model
 
     for model_path in noise_model_paths:
-        model = TreeLearn( num_blocks=num_blocks, use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size )
+        model = TreeLearn( num_blocks=num_blocks, use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size, dim_feat=4 )
         model.load_state_dict(torch.load( model_path, weights_only=True ))
 
         plot = os.path.basename(model_path).split('_')[-1].split('.')[0]
