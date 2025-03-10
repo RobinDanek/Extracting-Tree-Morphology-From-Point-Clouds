@@ -17,16 +17,17 @@ def createQSMSet( trees_per_plot=10, random_state=42 ):
     random.seed( random_state )
 
     data_dir = os.path.join('data', 'labeled', 'offset')
-    # Define path to output json
-    json_path = os.path.join(data_dir, 'qsm_set.json')
-
-    # List for storing the picked trees
-    picked_trees = []
 
     # Get the jsons containing the trees per plot
     plot_jsons = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.startswith('plot_') and f.endswith('.json')]
 
     for plot_json in plot_jsons:
+
+        plot_number = plot_json.split("_")[1].split(".")[0]
+
+        # List for storing the picked trees
+        picked_trees = []
+
         with open(plot_json, 'r') as f:
             plot_trees = json.load(f)
 
@@ -38,8 +39,11 @@ def createQSMSet( trees_per_plot=10, random_state=42 ):
         
         picked_trees.extend(sampled_trees)
 
-    with open(json_path, 'w') as f:
-        json.dump(picked_trees, f, indent=4)
+        # Define path to output json
+        json_path = os.path.join(data_dir, f'qsm_set_{plot_number}.json')
+
+        with open(json_path, 'w') as f:
+            json.dump(picked_trees, f, indent=4)
 
     return
 

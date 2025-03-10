@@ -8,7 +8,7 @@ import json
 from collections import defaultdict
 
 class TreeSet(Dataset):
-    def __init__(self, json_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, min_height=8):
+    def __init__(self, json_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -46,7 +46,6 @@ class TreeSet(Dataset):
         self.training = training
         self.data_augmentations = data_augmentations
         self.noise_distance = noise_distance
-        self.min_height = min_height
 
         if logger:
             self.logger = logger
@@ -108,6 +107,7 @@ class TreeSet(Dataset):
             "offset_mask": offset_mask,
             "noise_points": noise_points,
             "noise_features": noise_features,
+            "data_path": data_path
         }
     
     def collate_fn_voxel(self, batch):
@@ -127,6 +127,7 @@ class TreeSet(Dataset):
         offset_labels = []
         offset_masks = []
         noise_xyzs, noise_feats, noise_batch_ids = [], [], []
+        data_paths = []
 
         total_points_num = 0
         batch_id = 0
@@ -137,6 +138,8 @@ class TreeSet(Dataset):
             offsets = data["offsets"]
             semantic_label = data["semantic_label"]
             offset_mask = data["offset_mask"]
+            path = data["data_path"]  # Extract the file path
+            data_paths.append(path)
 
             num_points = len(points)
 
@@ -174,6 +177,7 @@ class TreeSet(Dataset):
             "offset_labels": offset_labels,
             "masks_off": offset_masks,
             "batch_size": batch_id,
+            "data_path": data_paths
         }
 
         if noise_xyzs:
