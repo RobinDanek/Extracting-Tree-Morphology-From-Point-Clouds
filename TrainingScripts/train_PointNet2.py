@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument("--warmup_t", type=int, default=20, help="Warmup steps for the scheduler")
     parser.add_argument("--lr_min", type=float, default=0.0001, help="Minimum learning rate for the scheduler")
     parser.add_argument("--no_progress_bar", action="store_true", help="Disable the progress bar but keep logs")
-    parser.add_argument("--dim_feat", type=int, default=1, help="The number of feature channels")
+    parser.add_argument("--dim_feat", type=int, default=4, help="The number of feature channels")
     parser.add_argument("--coords", type=bool, default=True, help="Whether to use coordinates for training")
     parser.add_argument("--features", action="store_true", help="Whether to use features for training")
     parser.add_argument("--t_initial", type=int, default=50, help="The number of epochs after which the learning rate for cosine is reseted")

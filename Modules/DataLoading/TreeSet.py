@@ -316,13 +316,13 @@ def get_treesets_random_split( data_root, logger=None, data_augmentations=None, 
     trainset = TreeSet( 
         train_file, training=True, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        noise_root=noise_root, min_height=min_height 
+        noise_root=noise_root
         )
     
     testset = TreeSet( 
         val_file, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        noise_root=noise_root, min_height=min_height 
+        noise_root=noise_root
         )
     
     return trainset, testset
@@ -348,13 +348,13 @@ def get_treesets_plot_split( data_root, test_plot, logger=None, data_augmentatio
     trainset = TreeSet( 
         json_files_train, training=True, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        noise_root=noise_root, min_height=min_height 
+        noise_root=noise_root
         )
     
     testset = TreeSet( 
         json_files_test, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
-        noise_root=noise_root, min_height=min_height 
+        noise_root=noise_root
         )
     
     return trainset, testset

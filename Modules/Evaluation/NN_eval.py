@@ -60,9 +60,6 @@ def makePredictionsWholeTree(model_dict):
             coords = tree["coords"].numpy()
 
             nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
-            if np.isnan(nnd_orig_tree).any():
-                raise ValueError("nnd_orig contains NaN values")
-
             # Calculate original distances
             nnd_orig.extend( nnd_orig_tree.tolist() )
 
@@ -73,9 +70,6 @@ def makePredictionsWholeTree(model_dict):
             offset_predictions = output["offset_predictions"].cpu().numpy()
 
             nnd_pred_tree = nearestNeighbourDistances( coords + offset_predictions, k=1 )[1]
-            if np.isnan(nnd_pred_tree).any():
-                raise ValueError("nnd_pred contains NaN values")
-
             nnd_pred.extend( nnd_pred_tree.tolist() )
 
         print(f"Finished plot {plot}")
@@ -106,42 +100,43 @@ def makePredictionsRasterized(model_dict):
                         data_root, test_plot=8, noise_distance=0.1, raster_size=1.0, stride=1.0, minibatch_size=60
                     )
 
-    plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_4_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_6_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
-    plot_8_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_voxel)
+    plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=data_plot_3.collate_fn_voxel)
+    plot_4_loader = get_dataloader(data_plot_4, 1, num_workers=0, training=False, collate_fn=data_plot_4.collate_fn_voxel)
+    plot_6_loader = get_dataloader(data_plot_6, 1, num_workers=0, training=False, collate_fn=data_plot_6.collate_fn_voxel)
+    plot_8_loader = get_dataloader(data_plot_8, 1, num_workers=0, training=False, collate_fn=data_plot_8.collate_fn_voxel)
 
-    raster_plot_3_loader = get_dataloader(raster_data_plot_3, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
-    raster_plot_4_loader = get_dataloader(raster_data_plot_4, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
-    raster_plot_6_loader = get_dataloader(raster_data_plot_6, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
-    raster_plot_8_loader = get_dataloader(raster_data_plot_8, 1, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
+    raster_plot_3_loader = get_dataloader(raster_data_plot_3, 1, num_workers=0, training=False, collate_fn=raster_data_plot_3.collate_fn_streaming)
+    raster_plot_4_loader = get_dataloader(raster_data_plot_4, 1, num_workers=0, training=False, collate_fn=raster_data_plot_4.collate_fn_streaming)
+    raster_plot_6_loader = get_dataloader(raster_data_plot_6, 1, num_workers=0, training=False, collate_fn=raster_data_plot_6.collate_fn_streaming)
+    raster_plot_8_loader = get_dataloader(raster_data_plot_8, 1, num_workers=0, training=False, collate_fn=raster_data_plot_8.collate_fn_streaming)
 
     plot_loaders = [plot_3_loader, plot_4_loader, plot_6_loader, plot_8_loader]
     raster_plot_loaders = [raster_plot_3_loader, raster_plot_4_loader, raster_plot_6_loader, raster_plot_8_loader]
     plots = [3,4,6,8]
 
-    for plot, plot_loader in zip(plots, plot_loaders):
-
-        for tree in plot_loader:
-            coords = tree["coords"].numpy()
-
-            # Calculate original distances
-            nnd_orig.extend( nearestNeighbourDistances(coords[0], k=1).tolist() )
-
-    for plot, plot_loader in zip(plots, raster_plot_loaders):
+    print("Starting nearest neighbour calculations")
+    for plot, plot_loader, raster_plot_loader in zip(plots, plot_loaders, raster_plot_loaders):
 
         model = model_dict[f"O_P{plot}"]
         model = model.cuda()
 
-        for tree in plot_loader:
+        for tree, raster_tree in progress_bar(zip(plot_loader, raster_plot_loader), master=None, total=len(plot_loader)):
+            coords = tree["coords"].numpy()
+
+            nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
+            # Calculate original distances
+            nnd_orig.extend( nnd_orig_tree.tolist() )
 
             # Make predictions
             with torch.no_grad():
-                output = model.forward(tree, return_loss=False)
+                output = model.forward_hierarchical_streaming(raster_tree, return_loss=False, scaler=None)
 
             offset_predictions = output["offset_predictions"].cpu().numpy()
 
-            nnd_pred.extend( nearestNeighbourDistances( coords[0] + offset_predictions, k=1 ).tolist() )
+            nnd_pred_tree = nearestNeighbourDistances( coords + offset_predictions, k=1 )[1]
+            nnd_pred.extend( nnd_pred_tree.tolist() )
+
+        print(f"Finished plot {plot}")
 
     return nnd_orig, nnd_pred
 
@@ -189,9 +184,14 @@ def fit_power_law(x, y):
         a_err (float): Standard error of 'a'.
         b_err (float): Standard error of 'b'.
     """
-    epsilon = 1e-4 # For numerical stability
-    log_x = np.log(x + epsilon)
-    log_y = np.log(y + epsilon)
+    epsilon = 1e-8  # For numerical stability
+
+    # Clamp values so that none are below epsilon
+    x_clipped = np.clip(x, epsilon, None)
+    y_clipped = np.clip(y, epsilon, None)
+    
+    log_x = np.log(x_clipped)
+    log_y = np.log(y_clipped)
 
     # Fit the power-law model in log-log space
     popt, pcov = curve_fit(lambda log_x, log_a, b: log_a + b * log_x, log_x, log_y)
@@ -203,11 +203,35 @@ def fit_power_law(x, y):
     a_err = a * perr[0]  # Convert log error to standard scale
     b_err = perr[1]
 
-    # Generate fitted values
-    x_fit = np.linspace(min(x), max(x), 100)
+    # Generate fitted values with x values evenly spaced in log-space:
+    x_fit = np.logspace(-4, np.log10(x_clipped.max()), 100)
     y_fit = power_law(x_fit, a, b)
 
     return x_fit, y_fit, a, b, a_err, b_err
+
+    # epsilon = 1e-4  # For numerical stability
+
+    # # Clamp values so that none are below epsilon
+    # # x_clipped = np.clip(x, epsilon, None)
+    # # y_clipped = np.clip(y, epsilon, None)
+    # x_clipped = x
+    # y_clipped = y
+    
+    # # Fit the power-law model in linear space using non-linear least squares.
+    # # p0 provides initial guesses for [a, b]. Adjust these if needed.
+    # popt, pcov = curve_fit(power_law, x_clipped, y_clipped, p0=[1.0, 1.0])
+    # a, b = popt
+
+    # # Compute standard errors from the covariance matrix.
+    # perr = np.sqrt(np.diag(pcov))
+    # a_err = perr[0]
+    # b_err = perr[1]
+
+    # # Generate fitted values with x values evenly spaced in linear space.
+    # x_fit = np.logspace(-4, np.log10(x_clipped.max()), 100)
+    # y_fit = power_law(x_fit, a, b)
+
+    # return x_fit, y_fit, a, b, a_err, b_err
 
 def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
     """
@@ -250,7 +274,8 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
         return bins
 
     # Generate bins based on the range of original distances
-    bins = generate_log_bins(np.min(nnd_orig) + 1e-4, np.max(nnd_orig))
+    # bins = generate_log_bins(1e-4, np.max(nnd_orig))
+    bins = generate_log_bins(np.clip(np.min(nnd_orig), 1e-8, None), np.max(nnd_orig))
 
     # Compute binned statistics: means and standard deviations of transformed distances.
     bin_means, bin_edges, _ = binned_statistic(nnd_orig, nnd_pred, statistic='mean', bins=bins)
@@ -259,13 +284,14 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
     bin_centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
 
     # Add bisector line (black dashed) for reference: y = x.
-    x_bis = np.linspace(np.min(nnd_orig) + 1e-4, np.max(nnd_orig), 100)
+    # x_bis = np.linspace(1e-4, np.max(nnd_orig), 100)
+    x_bis = np.linspace(np.clip(np.min(nnd_orig), 1e-8, None), np.max(nnd_orig), 100)
 
     # Create the plot
     plt.figure(figsize=(8, 6))
     plt.xscale('log')
     plt.yscale('log')
-    #plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
+    plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
     plt.errorbar(bin_centers, bin_means, yerr=bin_stds, fmt='o', color='red', label='Binned Mean')
     plt.plot(x_fit, y_fit, color='blue', label=r"$y = ax^b$" + 
                    f"\n$a = {a:.3f} \pm {a_err:.3f}$" + 

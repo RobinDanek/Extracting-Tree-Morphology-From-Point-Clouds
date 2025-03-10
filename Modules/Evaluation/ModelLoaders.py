@@ -9,7 +9,7 @@ import numpy as np
 import json
 
 def load_model( 
-    model_type, offset_model_dir, noise_model_dir, num_blocks=3, use_feats=True, use_coords=True, voxel_size=0.02, pointnet2_depth=4,
+    model_type, offset_model_dir, noise_model_dir, num_blocks=3, use_feats=True, use_coords=True, voxel_size=0.02, pointnet2_depth=5,
     ):
     """
         This function loads a model by returning a dict of the models.
@@ -63,7 +63,7 @@ def load_pointnet2(offset_model_dir, noise_model_dir, use_feats, use_coords, poi
     noise_model_paths = [os.path.join( noise_model_dir, f ) for f in os.listdir( noise_model_dir ) if f.endswith('.pt') ]
 
     for model_path in offset_model_paths:
-        model = PointNet2( use_feats=use_feats, use_coords=use_coords, depth=pointnet2_depth )
+        model = PointNet2( use_feats=use_feats, use_coords=use_coords, depth=pointnet2_depth, dim_feat=4 )
         model.load_state_dict(torch.load( model_path, weights_only=True ))
 
         plot = os.path.basename(model_path).split('_')[-1].split('.')[0]
@@ -71,7 +71,7 @@ def load_pointnet2(offset_model_dir, noise_model_dir, use_feats, use_coords, poi
         model_dict[f"O_{plot}"] = model
 
     for model_path in noise_model_paths:
-        model = PointNet2( use_feats=use_feats, use_coords=use_coords, depth=pointnet2_depth )
+        model = PointNet2( use_feats=use_feats, use_coords=use_coords, depth=pointnet2_depth, dim_feat=4 )
         model.load_state_dict(torch.load( model_path, weights_only=True ))
 
         plot = os.path.basename(model_path).split('_')[-1].split('.')[0]
@@ -89,7 +89,7 @@ def load_pointtransformerv3(offset_model_dir, noise_model_dir, use_feats, use_co
     noise_model_paths = [os.path.join( noise_model_dir, f ) for f in os.listdir( noise_model_dir ) if f.endswith('.pt') ]
 
     for model_path in offset_model_paths:
-        model = PointTransformerV3( use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size )
+        model = PointTransformerWithHeads( use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size )
         model.load_state_dict(torch.load( model_path, weights_only=True ))
 
         plot = os.path.basename(model_path).split('_')[-1].split('.')[0]
@@ -97,7 +97,7 @@ def load_pointtransformerv3(offset_model_dir, noise_model_dir, use_feats, use_co
         model_dict[f"O_{plot}"] = model
 
     for model_path in noise_model_paths:
-        model = PointTransformerV3( use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size )
+        model = PointTransformerWithHeads( use_feats=use_feats, use_coords=use_coords, voxel_size=voxel_size )
         model.load_state_dict(torch.load( model_path, weights_only=True ))
 
         plot = os.path.basename(model_path).split('_')[-1].split('.')[0]

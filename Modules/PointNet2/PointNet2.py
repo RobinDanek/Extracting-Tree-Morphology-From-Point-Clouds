@@ -13,7 +13,7 @@ class PointNet2(nn.Module):
                 loss_multiplier_offset=1,
                 dim_feat=4,
                 use_coords=True,
-                use_features=False,
+                use_features=True,
                 depth=4,
                 **kwargs
                 ):
