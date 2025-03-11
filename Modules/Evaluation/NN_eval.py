@@ -17,7 +17,7 @@ def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
 
     # First calculate the knns of the original and the transformed clouds
     if not rasterized_data:
-        nnd_orig, nnd_pred = makePredictionsWholeTree(model_dict)
+        nnd_orig, nnd_pred, plot_trees = makePredictionsWholeTree(model_dict)
     else:
         nnd_orig, nnd_pred = makePredictionsRasterized(model_dict)
 
@@ -25,7 +25,12 @@ def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
     if plot_savedir:
         plot_savepath = os.path.join(plot_savedir, f'nn_plot.png')
     # Now perform a fit and plot
-    plot_nn_distances( nnd_orig, nnd_pred, plot_savepath )
+    plot_nn_distances( nnd_orig, nnd_pred, plot_trees, plot_savepath )
+
+    if plot_savedir:
+        plot_savepath = os.path.join(plot_savedir, f'nn_plot_subplots.png')
+    # Now perform a fit and plot
+    plot_nn_distances_subplots( nnd_orig, nnd_pred, plot_trees, plot_savepath )
 
     return
 
@@ -35,6 +40,7 @@ def makePredictionsWholeTree(model_dict):
 
     nnd_orig = []
     nnd_pred = []
+    tree_plots = []  # New list to store the plot id for each tree
 
     data_root = os.path.join( 'data', 'labeled', 'offset' )
     _, data_plot_3 = get_treesets_plot_split(data_root, test_plot=3, noise_distance=0.1)
@@ -55,6 +61,7 @@ def makePredictionsWholeTree(model_dict):
 
         model = model_dict[f"O_P{plot}"]
         model = model.cuda()
+        model.eval()
 
         for tree in progress_bar(plot_loader, master=None):
             coords = tree["coords"].numpy()
@@ -62,6 +69,8 @@ def makePredictionsWholeTree(model_dict):
             nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
             # Calculate original distances
             nnd_orig.extend( nnd_orig_tree.tolist() )
+            # Record the plot id for every tree in this loader:
+            tree_plots.extend([plot] * len(nnd_orig_tree))
 
             # Make predictions
             with torch.no_grad():
@@ -74,7 +83,7 @@ def makePredictionsWholeTree(model_dict):
 
         print(f"Finished plot {plot}")
 
-    return nnd_orig, nnd_pred
+    return nnd_orig, nnd_pred, tree_plots
 
 def makePredictionsRasterized(model_dict):
 
@@ -119,6 +128,7 @@ def makePredictionsRasterized(model_dict):
 
         model = model_dict[f"O_P{plot}"]
         model = model.cuda()
+        model.eval()
 
         for tree, raster_tree in progress_bar(zip(plot_loader, raster_plot_loader), master=None, total=len(plot_loader)):
             coords = tree["coords"].numpy()
@@ -233,7 +243,7 @@ def fit_power_law(x, y):
 
     # return x_fit, y_fit, a, b, a_err, b_err
 
-def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
+def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None):
     """
     Plots a double logarithmic scatter plot of the transformed nearest neighbour distances
     against the original ones. 
@@ -275,7 +285,7 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
 
     # Generate bins based on the range of original distances
     # bins = generate_log_bins(1e-4, np.max(nnd_orig))
-    bins = generate_log_bins(np.clip(np.min(nnd_orig), 1e-8, None), np.max(nnd_orig))
+    bins = generate_log_bins(1e-5, np.max(nnd_orig))
 
     # Compute binned statistics: means and standard deviations of transformed distances.
     bin_means, bin_edges, _ = binned_statistic(nnd_orig, nnd_pred, statistic='mean', bins=bins)
@@ -285,13 +295,24 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
 
     # Add bisector line (black dashed) for reference: y = x.
     # x_bis = np.linspace(1e-4, np.max(nnd_orig), 100)
-    x_bis = np.linspace(np.clip(np.min(nnd_orig), 1e-8, None), np.max(nnd_orig), 100)
+    x_bis = np.linspace(1e-5, np.max(nnd_orig), 100)
 
     # Create the plot
     plt.figure(figsize=(8, 6))
     plt.xscale('log')
     plt.yscale('log')
-    plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
+    if tree_plots:
+        # Instead of one scatter call, plot points from each plot separately.
+        # Define colors for each plot.
+        colors = {3: 'red', 4: 'green', 6: 'blue', 8: 'yellow'}
+        unique_plots = sorted(set(tree_plots))
+        for p in unique_plots:
+            # Get the indices for points from this plot.
+            indices = [i for i, plot in enumerate(tree_plots) if plot == p]
+            plt.scatter(nnd_orig[indices], nnd_pred[indices],
+                        color=colors[p], label=f'Plot {p}', alpha=0.1, s=5)
+    else:
+        plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
     plt.errorbar(bin_centers, bin_means, yerr=bin_stds, fmt='o', color='red', label='Binned Mean')
     plt.plot(x_fit, y_fit, color='blue', label=r"$y = ax^b$" + 
                    f"\n$a = {a:.3f} \pm {a_err:.3f}$" + 
@@ -304,4 +325,95 @@ def plot_nn_distances(nnd_orig, nnd_pred, plot_savepath=None):
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     if plot_savepath:
         plt.savefig( plot_savepath, dpi=300 )
+    plt.show()
+
+
+def plot_nn_distances_subplots(nnd_orig, nnd_pred, tree_plots, plot_savepath=None):
+    """
+    Creates a 2x2 subplot where each subplot shows the scatter of original vs.
+    transformed NN distances, the corresponding power-law fit, and the binned
+    means with error bars for a single plot.
+    
+    Parameters:
+        nnd_orig (list or np.ndarray): Original nearest-neighbor distances.
+        nnd_pred (list or np.ndarray): Transformed nearest-neighbor distances.
+        tree_plots (list): List of plot identifiers corresponding to each tree.
+        plot_savepath (str, optional): If provided, the figure is saved to this path.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.stats import binned_statistic
+
+    # Helper function: generate logarithmic bins
+    def generate_log_bins(min_val, max_val):
+        bins = []
+        order_min = int(np.floor(np.log10(min_val)))
+        order_max = int(np.ceil(np.log10(max_val)))
+        for order in range(order_min, order_max + 1):
+            for m in range(1, 10):
+                value = m * 10**order
+                if min_val <= value <= max_val:
+                    bins.append(value)
+        bins = np.array(sorted(bins))
+        if bins[0] > min_val:
+            bins = np.insert(bins, 0, min_val)
+        if bins[-1] < max_val:
+            bins = np.append(bins, max_val)
+        return bins
+
+    # Identify the unique plot identifiers (e.g., 3, 4, 6, 8)
+    unique_plots = sorted(set(tree_plots))
+    
+    # Create a 2x2 subplot figure
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True, sharey=True)
+    axes = axes.flatten()  # Easier iteration over the axes
+
+    for ax, p in zip(axes, unique_plots):
+        # Filter the data for the current plot
+        mask = np.array(tree_plots) == p
+        orig_subset = np.array(nnd_orig)[mask]
+        pred_subset = np.array(nnd_pred)[mask]
+
+        # Fit the power-law model on the subset of data
+        x_fit, y_fit, a, b, a_err, b_err = fit_power_law(orig_subset, pred_subset)
+
+        # Create the scatter plot of the individual data points
+        ax.scatter(orig_subset, pred_subset, alpha=0.3, s=5)
+        
+        # Overlay the fitted power-law curve
+        ax.plot(x_fit, y_fit, color='blue',
+                label=r"$y = ax^b$" +
+                      f"\n$a = {a:.3f} \pm {a_err:.3f}$" +
+                      f"\n$b = {b:.3f} \pm {b_err:.3f}$")
+        
+        # Add a bisector line for reference (y = x)
+        x_min = 1e-5
+        x_max = np.max(orig_subset)
+        x_bis = np.linspace(x_min, x_max, 100)
+        ax.plot(x_bis, x_bis, 'k--', label="Bisector")
+
+        # Generate logarithmic bins for the current subset
+        bins = generate_log_bins(1e-5, x_max)
+        
+        # Compute binned statistics: means and standard deviations of the transformed distances.
+        bin_means, bin_edges, _ = binned_statistic(orig_subset, pred_subset, statistic='mean', bins=bins)
+        bin_stds, _, _ = binned_statistic(orig_subset, pred_subset, statistic='std', bins=bins)
+        bin_centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
+        
+        # Plot the binned means with error bars
+        ax.errorbar(bin_centers, bin_means, yerr=bin_stds, fmt='o', color='red', label='Binned Mean')
+
+        # Set the axes to logarithmic scale and add labels and legend
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_title(f"Plot {p}")
+        ax.set_xlabel("Original NN Distance")
+        ax.set_ylabel("Transformed NN Distance")
+        ax.legend()
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+        ax.set_xlim(1e-5, x_max)
+
+    plt.tight_layout()
+    if plot_savepath:
+        plt.savefig(plot_savepath, dpi=300)
     plt.show()
