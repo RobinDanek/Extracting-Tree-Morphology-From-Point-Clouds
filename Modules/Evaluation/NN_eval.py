@@ -4,13 +4,13 @@ import torch.nn as nn
 from Modules.DataLoading.TreeSet import *
 from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Evaluation.ModelLoaders import load_model
+from Modules.Utils import fit_power_law, generate_log_bins
 
 import pandas as pd
 import numpy as np
 import json
 from scipy.spatial import cKDTree
 from scipy import stats
-from scipy.optimize import curve_fit
 from fastprogress.fastprogress import master_bar, progress_bar
 
 def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
@@ -174,75 +174,6 @@ def nearestNeighbourDistances(points, k):
 
 ############ PLOTTING FUNCTIONS ############
 
-def power_law(x, a, b):
-    """Power-law function y = a * x^b."""
-    return a * np.power(x, b)
-
-def fit_power_law(x, y):
-    """
-    Fits a power law y = a * x^b to the given data in log-log space.
-
-    Parameters:
-        x (numpy.ndarray): Original distances.
-        y (numpy.ndarray): Transformed distances.
-
-    Returns:
-        x_fit (numpy.ndarray): X values for fitted line.
-        y_fit (numpy.ndarray): Corresponding Y values from fitted model.
-        a (float): Estimated coefficient.
-        b (float): Estimated exponent.
-        a_err (float): Standard error of 'a'.
-        b_err (float): Standard error of 'b'.
-    """
-    epsilon = 1e-8  # For numerical stability
-
-    # Clamp values so that none are below epsilon
-    x_clipped = np.clip(x, epsilon, None)
-    y_clipped = np.clip(y, epsilon, None)
-    
-    log_x = np.log(x_clipped)
-    log_y = np.log(y_clipped)
-
-    # Fit the power-law model in log-log space
-    popt, pcov = curve_fit(lambda log_x, log_a, b: log_a + b * log_x, log_x, log_y)
-    log_a, b = popt
-    a = np.exp(log_a)
-
-    # Compute standard errors
-    perr = np.sqrt(np.diag(pcov))
-    a_err = a * perr[0]  # Convert log error to standard scale
-    b_err = perr[1]
-
-    # Generate fitted values with x values evenly spaced in log-space:
-    x_fit = np.logspace(-4, np.log10(x_clipped.max()), 100)
-    y_fit = power_law(x_fit, a, b)
-
-    return x_fit, y_fit, a, b, a_err, b_err
-
-    # epsilon = 1e-4  # For numerical stability
-
-    # # Clamp values so that none are below epsilon
-    # # x_clipped = np.clip(x, epsilon, None)
-    # # y_clipped = np.clip(y, epsilon, None)
-    # x_clipped = x
-    # y_clipped = y
-    
-    # # Fit the power-law model in linear space using non-linear least squares.
-    # # p0 provides initial guesses for [a, b]. Adjust these if needed.
-    # popt, pcov = curve_fit(power_law, x_clipped, y_clipped, p0=[1.0, 1.0])
-    # a, b = popt
-
-    # # Compute standard errors from the covariance matrix.
-    # perr = np.sqrt(np.diag(pcov))
-    # a_err = perr[0]
-    # b_err = perr[1]
-
-    # # Generate fitted values with x values evenly spaced in linear space.
-    # x_fit = np.logspace(-4, np.log10(x_clipped.max()), 100)
-    # y_fit = power_law(x_fit, a, b)
-
-    # return x_fit, y_fit, a, b, a_err, b_err
-
 def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None):
     """
     Plots a double logarithmic scatter plot of the transformed nearest neighbour distances
@@ -264,24 +195,6 @@ def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None):
 
     # Fit power law using the provided function
     x_fit, y_fit, a, b, a_err, b_err = fit_power_law(nnd_orig, nnd_pred)
-
-    # Helper function to generate bins: 1,2,...,9 * 10^order for orders that cover the data range.
-    def generate_log_bins(min_val, max_val):
-        bins = []
-        order_min = int(np.floor(np.log10(min_val)))
-        order_max = int(np.ceil(np.log10(max_val)))
-        for order in range(order_min, order_max + 1):
-            for m in range(1, 10):
-                value = m * 10**order
-                if min_val <= value <= max_val:
-                    bins.append(value)
-        bins = np.array(sorted(bins))
-        # Make sure the bins cover the full range:
-        if bins[0] > min_val:
-            bins = np.insert(bins, 0, min_val)
-        if bins[-1] < max_val:
-            bins = np.append(bins, max_val)
-        return bins
 
     # Generate bins based on the range of original distances
     # bins = generate_log_bins(1e-4, np.max(nnd_orig))
@@ -343,23 +256,6 @@ def plot_nn_distances_subplots(nnd_orig, nnd_pred, tree_plots, plot_savepath=Non
     import numpy as np
     import matplotlib.pyplot as plt
     from scipy.stats import binned_statistic
-
-    # Helper function: generate logarithmic bins
-    def generate_log_bins(min_val, max_val):
-        bins = []
-        order_min = int(np.floor(np.log10(min_val)))
-        order_max = int(np.ceil(np.log10(max_val)))
-        for order in range(order_min, order_max + 1):
-            for m in range(1, 10):
-                value = m * 10**order
-                if min_val <= value <= max_val:
-                    bins.append(value)
-        bins = np.array(sorted(bins))
-        if bins[0] > min_val:
-            bins = np.insert(bins, 0, min_val)
-        if bins[-1] < max_val:
-            bins = np.append(bins, max_val)
-        return bins
 
     # Identify the unique plot identifiers (e.g., 3, 4, 6, 8)
     unique_plots = sorted(set(tree_plots))

@@ -29,7 +29,7 @@ def makePredictions(offset_model, noise_model):
     model_dict = load_model(model_type="pointnet2", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
 
     data_dir = os.path.join( 'data', 'labeled', 'offset' )
-    prediction_dir = os.path.join( 'data', 'predicted', 'PointNet2' )
+    prediction_dir = os.path.join( 'data', 'predicted', 'PointNet2', 'raw' )
     os.makedirs( prediction_dir, exist_ok=True )
 
     # create dataloaders for prediction making
