@@ -1,8 +1,13 @@
 import numpy as np
 import pandas as pd
-from sklearn.cluster import DBSCAN
-from collections import defaultdict
+import open3d as o3d
+from sklearn.cluster import DBSCAN, AgglomerativeClustering
+from collections import defaultdict, Counter
+from tqdm import tqdm
+from scipy.spatial import cKDTree
 import random
+
+# TODO: Corrections and check clustering (very weird vor stem)
 
 class Sphere:
     def __init__(self, center, radius, thickness, is_seed=False, spread=None):
@@ -40,21 +45,16 @@ class Sphere:
         self.contained_points = indices[contained_mask]
         self.outer_points = indices[outer_mask]
 
-    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5):
+    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5, algorithm='agglomerative', linkage='average'):
         """
-        Cluster the outer points (those in the hollow region) using DBSCAN to detect potential branch directions.
-        For each detected cluster, compute:
-        - The centroid in 3D (as candidate center).
-        - A spread measure based on fitting a circle onto the cluster:
-            * Fit a best-fit plane via PCA.
-            * Project the points onto that plane.
-            * Compute the median distance from the projected centroid.
-        If no valid clusters are found (i.e. all points are noise or there are too few points), the sphere marks itself as outer.
-        
-        :param points: numpy array of shape (N,3) containing all 3D points.
-        :param eps: DBSCAN eps parameter.
-        :param min_samples: DBSCAN minimum number of samples in a neighborhood to form a cluster.
-        :return: List of tuples (candidate_center, candidate_spread) for new spheres.
+        Cluster the outer points using DBSCAN or Agglomerative Clustering to detect candidate centers.
+
+        :param points: Full 3D point cloud.
+        :param eps: Neighborhood radius.
+        :param min_samples: Minimum cluster size for DBSCAN.
+        :param algorithm: 'dbscan' or 'agglomerative'
+        :param linkage: Used only for agglomerative.
+        :return: List of (center_3d, spread) tuples.
         """
         if self.outer_points.size == 0:
             # If there are no points in the outer region, mark as outer and return an empty list.
@@ -62,14 +62,20 @@ class Sphere:
             return []
         
         candidate_coords = points[self.outer_points]
-        clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(candidate_coords)
-        labels = clustering.labels_
-        # Identify clusters (ignoring noise, which is labeled as -1)
-        valid_labels = set(labels) - {-1}
+
+        if candidate_coords.shape[0] < 2:
+            self.is_outer = True
+            return []
         
-        # If no clusters (other than noise) are found, mark as outer.
+        if algorithm == 'agglomerative':
+            labels = cluster_labels_agglomerative(
+                candidate_coords, eps=eps, min_cluster_size=min_samples, linkage=linkage
+            )
+        elif algorithm == 'dbscan':
+            labels = DBSCAN(eps=eps, min_samples=min_samples).fit(candidate_coords).labels_
+
+        valid_labels = set(labels) - {-1}
         if not valid_labels:
-            #print(f"Number of outer points: {len(self.outer_points)}\tNumber of inner points: {len(self.contained_points)}\tOUTER!")
             self.is_outer = True
             return []
         
@@ -91,13 +97,22 @@ class Sphere:
             # Project the cluster points onto the plane.
             projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
             # The 2D centroid (should be near [0,0] because of centering) is:
-            centroid_2d = np.mean(projected, axis=0)
-            # Compute distances from each projected point to the 2D centroid.
-            dists = np.linalg.norm(projected - centroid_2d, axis=1)
-            # Use the median distance as a robust measure for the spread.
-            spread = np.median(dists)
+            # centroid_2d = np.mean(projected, axis=0)
+            # # Compute distances from each projected point to the 2D centroid.
+            # dists = np.linalg.norm(projected - centroid_2d, axis=1)
+            # # Use the median distance as a robust measure for the spread.
+            # spread = np.median(dists)
             
-            candidate_info.append((centroid_3d, spread))
+            # candidate_info.append((centroid_3d, spread))
+
+            # New: Fit circle in 2D
+            center_2d, radius = fit_circle_2d(projected)
+
+            # Convert 2D circle center back to 3D
+            center_3d = centroid_3d + plane_basis @ center_2d
+
+            # Append center and radius (spread)
+            candidate_info.append((center_3d, radius))
 
         # Sometimes the seed sphere hits the start of a branch, thus needing to be an outer sphere
         if self.is_seed and len(candidate_info)==1:
@@ -164,24 +179,122 @@ class SphereCluster:
 class CylinderTracker:
     def __init__(self):
         self.cylinder_records = []
-        self.cylinder_id = 0
 
-    def add_cylinder(self, sphere1, sphere2, radius):
-        h = np.linalg.norm(sphere1.center - sphere2.center)
-        volume = np.pi * radius**2 * h
+    def add_cylinder(self, sphere_a, sphere_b, radius):
+        start = sphere_a.center
+        end = sphere_b.center
+        height = np.linalg.norm(end - start)
+        volume = np.pi * radius**2 * height
         self.cylinder_records.append({
-            "ID": self.cylinder_id,
-            "startX": sphere1.center[0],
-            "startY": sphere1.center[1],
-            "startZ": sphere1.center[2],
-            "endX": sphere2.center[0],
-            "endY": sphere2.center[1],
-            "endZ": sphere2.center[2],
+            "ID": len(self.cylinder_records),
+            "startX": start[0], "startY": start[1], "startZ": start[2],
+            "endX": end[0], "endY": end[1], "endZ": end[2],
             "radius": radius,
             "volume": volume
         })
-        self.cylinder_id += 1
 
+    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=20):
+        """
+        Exports cylinders as triangle meshes to a PLY file.
+        Each cylinder is a mesh between start and end points with given radius.
+        """
+        if not self.cylinder_records:
+            print("No cylinders to export.")
+            return
+
+        radii = np.array([record["radius"] for record in self.cylinder_records])
+        r_min, r_max = np.min([radii.min(), 1e-4]), radii.max()
+
+        def radius_to_color(radius):
+            # Normalize volume to 0..1
+            t = (radius - r_min) / (r_max - r_min + 1e-8)
+            # Green → Yellow → Red gradient
+            r = min(2 * t, 1.0)
+            g = min(2 * (1 - t), 1.0)
+            b = 0.0
+            return [r, g, b]
+        
+        mesh_list = []
+
+        for record in self.cylinder_records:
+            start = np.array([record["startX"], record["startY"], record["startZ"]])
+            end = np.array([record["endX"], record["endY"], record["endZ"]])
+            radius = record["radius"]
+            volume = record["volume"]
+
+            if np.allclose(start, end):
+                continue
+
+            radius = max(radius, 1e-4)  # Clamp to minimum radius if needed
+
+            mesh = self._create_cylinder_between(start, end, radius, resolution)
+
+            # Color the mesh
+            color = radius_to_color(radius)
+            mesh.paint_uniform_color(color)
+
+            mesh_list.append(mesh)
+
+        if not mesh_list:
+            print("⚠️ No valid cylinder meshes generated.")
+            return
+
+        combined = mesh_list[0]
+        for m in mesh_list[1:]:
+            combined += m
+
+        o3d.io.write_triangle_mesh(filename, combined)
+        print(f"Cylinder mesh exported to: {filename}")
+
+    def _create_cylinder_between(self, p0, p1, radius, resolution):
+        """
+        Create a cylinder mesh between two points.
+        """
+        # Create cylinder along Z
+        height = np.linalg.norm(p1 - p0)
+        mesh = o3d.geometry.TriangleMesh.create_cylinder(radius=radius, height=height, resolution=resolution)
+        mesh.compute_vertex_normals()
+
+        # Align with direction
+        direction = p1 - p0
+        direction /= np.linalg.norm(direction)
+
+        z_axis = np.array([0, 0, 1])
+        v = np.cross(z_axis, direction)
+        c = np.dot(z_axis, direction)
+        if np.linalg.norm(v) < 1e-6:
+            R = np.eye(3)
+        else:
+            kmat = np.array([[0, -v[2], v[1]],
+                             [v[2], 0, -v[0]],
+                             [-v[1], v[0], 0]])
+            R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (np.linalg.norm(v)**2))
+
+        mesh.rotate(R, center=np.zeros(3))
+        mesh.translate(p0)
+        return mesh
+    
+def fit_circle_2d(points_2d):
+    """
+    Fit a circle to 2D points using algebraic least squares.
+
+    Parameters:
+        points_2d (np.ndarray): Shape (N, 2), the 2D coordinates
+
+    Returns:
+        center (np.ndarray): Shape (2,), the estimated circle center (x, y)
+        radius (float): The estimated radius
+    """
+    x = points_2d[:, 0]
+    y = points_2d[:, 1]
+    A = np.c_[2*x, 2*y, np.ones_like(x)]
+    b = x**2 + y**2
+
+    sol, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+    a, b, c = sol
+    center = np.array([a, b])
+    radius = np.sqrt(c + a**2 + b**2)
+    return center, radius
 
 def load_pointcloud(file_path):
     """
@@ -218,29 +331,40 @@ def compute_spread_of_points(points):
     return np.mean(dists)
 
 
-def initialize_first_sphere(points, sphere_radius, sphere_thickness):
+def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1):
     """
-    Initialize the first sphere based on the lowest point (i.e. at the base of the considered stem).
-    You might choose the point with the smallest z-value as the seed.
+    Initialize the first sphere based on the lowest slice of the tree.
+    Uses PCA projection and median spread just like later clustering.
     """
-    # Select points that are within the range -1 to 1 in x and y
-    mask = (points[:, 0] > -1) & (points[:, 0] < 1) & (points[:, 1] > -1) & (points[:, 1] < 1)
-    filtered_points = points[mask]
+    min_z = np.min(points[:, 2])
+    z_threshold = min_z + slice_height
+    mask = points[:, 2] <= z_threshold
+    base_points = points[mask]
 
-    if filtered_points.size == 0:
-        raise ValueError("No points found in the specified region near (0,0). Consider adjusting the range.")
+    if base_points.shape[0] < 10:
+        raise ValueError("Not enough points found near the base to initialize the seed sphere.")
 
-    # Find the lowest point in the filtered subset
-    lowest_index = np.argmin(filtered_points[:, 2])
-    seed_point = filtered_points[lowest_index]
+    # Compute 3D centroid
+    center = np.mean(base_points, axis=0)
 
-    temp_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True)
-    temp_sphere.assign_points(points, np.arange(len(points)))
-    spread = compute_spread_of_points(points[temp_sphere.contained_points])
+    # Center the points for PCA
+    centered_coords = base_points - center
 
-    # Now create the final seed sphere with spread
-    seed_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=spread)
-    return seed_sphere
+    # PCA to find best-fit plane
+    U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
+    plane_basis = Vt[:2].T  # First 2 principal components
+
+    # Project to 2D plane
+    projected = centered_coords.dot(plane_basis)
+    centroid_2d = np.mean(projected, axis=0)
+    dists = np.linalg.norm(projected - centroid_2d, axis=1)
+
+    # Use median spread like in get_candidate_centers_and_spreads
+    spread = np.median(dists)
+    spread = max(spread, 0.05)
+    radius = max(spread * 2, 0.1)
+
+    return Sphere(center, radius=radius, thickness=sphere_thickness, is_seed=True, spread=spread)
 
 
 def find_seed_sphere(points, unsegmented_points, sphere_radius, sphere_thickness):
@@ -315,32 +439,53 @@ def generate_connection_cylinder(start, end, radius, num_rings=10, points_per_ri
     return np.array(points)
 
 
-def find_neighborhood_points(points, unsegmented_points, sphere, radius):
+def find_neighborhood_points(points, unsegmented_points, sphere, search_radius):
     """
-    Finds unsegmented points within a given radius of a specific sphere's center.
+    Efficiently finds unsegmented points within a given radius using KDTree.
+    """
+    if unsegmented_points.size == 0:
+        return np.array([], dtype=int)
+
+    coords = points[unsegmented_points]
+    tree = cKDTree(coords)
+    indices = tree.query_ball_point(sphere.center, r=sphere.radius + search_radius)
+    return unsegmented_points[indices]
+
+
+def cluster_labels_agglomerative(points, eps=0.2, min_cluster_size=5, linkage='average'):
+    """
+    Perform Agglomerative Clustering and return a label array like DBSCAN.
 
     Parameters:
-    - points: np.array (N,3), the full point cloud.
-    - unsegmented_points: np.array, indices of points that are not yet segmented.
-    - sphere: The outer sphere from which to search.
-    - radius: The search radius.
+        points: (N, D) numpy array of 2D or 3D points to cluster.
+        eps: float, maximum linkage distance.
+        min_cluster_size: int, discard clusters smaller than this.
+        linkage: 'single', 'complete', 'average', or 'ward'.
 
     Returns:
-    - np.array of indices of unsegmented points within the search radius.
+        labels: np.array of shape (N,) with filtered cluster labels (-1 for filtered clusters)
     """
-    # Get unsegmented points' coordinates
-    unsegmented_coords = points[unsegmented_points]
+    if len(points) < 2:
+        return -np.ones(len(points), dtype=int)
 
-    # Compute distances from the sphere's center
-    dists = np.linalg.norm(unsegmented_coords - sphere.center, axis=1)
+    # Run AgglomerativeClustering in full 3D
+    clustering = AgglomerativeClustering(n_clusters=None,
+                                         distance_threshold=eps,
+                                         linkage=linkage)
+    labels = clustering.fit_predict(points)
 
-    # Return unsegmented points within the radius
-    return unsegmented_points[dists <= radius]
+    # Filter out small clusters manually
+    labels_out = -np.ones_like(labels)
+    unique, counts = np.unique(labels, return_counts=True)
+
+    for label, count in zip(unique, counts):
+        if count >= min_cluster_size:
+            labels_out[labels == label] = label
+
+    return labels_out
 
 
-def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker,
-                   eps=0.5, min_samples=5, sphere_factor=1.5, radius_min=0.05,
-                   merge_eps=0.2, min_points_threshold=5, max_spread_growth=1.1):
+def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params):
     """
     Perform the sphere-following clustering on a given cluster, merging close candidate spheres.
 
@@ -353,9 +498,6 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
         merge_eps: Distance threshold for merging nearby new spheres.
         max_spread_growth: Limit on how much larger a child's spread can be compared to its parent.
     """
-
-    if connection_points is None:
-        connection_points = []
 
     cluster = SphereCluster(cluster_id=cluster_id)
     cluster.add_sphere(initial_sphere)
@@ -372,7 +514,7 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
         new_spheres = []
 
         for sphere in old_spheres:
-            candidate_info = sphere.get_candidate_centers_and_spreads(points, eps=eps, min_samples=min_samples)
+            candidate_info = sphere.get_candidate_centers_and_spreads(points, eps=params['eps'], min_samples=params['min_samples'], algorithm=params['clustering_algorithm'], linkage=params['clustering_linkage'])
             if not candidate_info:
                 continue
 
@@ -382,25 +524,26 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
             # === Fast path: only 1 candidate, no need to merge ===
             if len(candidate_info) == 1:
                 center, spread = candidate_info[0]
-                capped_spread = min(spread, parent_spread * max_spread_growth)
+                capped_spread = min(spread, parent_spread * params['max_spread_growth'])
 
-                new_radius = max(capped_spread * sphere_factor, radius_min)
+                new_radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
                 new_sphere = Sphere(center, radius=new_radius, thickness=sphere.thickness, spread=capped_spread)
                 new_sphere.assign_points(points, unsegmented_points)
 
-                if len(new_sphere.contained_points) > min_points_threshold:
-                    segmentation_ids[new_sphere.contained_points] = cluster_id
-                    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-                    new_spheres.append(new_sphere)
+                # if len(new_sphere.contained_points) >params ['min_points_threshold']:
+                #     new_spheres.append(new_sphere)
+                new_spheres.append(new_sphere)
+                segmentation_ids[new_sphere.contained_points] = cluster_id
+                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
                 cluster.add_sphere(new_sphere)
-                cylinder_tracker.add_cylinder( sphere, new_sphere, new_radius )
+                cylinder_tracker.add_cylinder( sphere, new_sphere, capped_spread )
 
 
                 continue  # skip to next queried sphere
 
             # === Merge close candidates using DBSCAN ===
             centers = np.array([c for c, _ in candidate_info])
-            spreads = np.array([min(s, parent_spread * max_spread_growth) for _, s in candidate_info]) # Already cap the spreads
+            spreads = np.array([min(s, parent_spread * params['max_spread_growth']) for _, s in candidate_info]) # Already cap the spreads
 
             db = DBSCAN(eps=parent_radius, min_samples=1).fit(centers)
             labels = db.labels_
@@ -414,10 +557,10 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
                 temp_spheres = []
                 weights = []
                 for center, spread in zip(grouped_centers, grouped_spreads):
-                    radius = max(spread * sphere_factor, radius_min)
+                    radius = max(spread * params['sphere_factor'], params['radius_min'])
                     temp = Sphere(center, radius=radius, thickness=sphere.thickness, spread=spread)
                     temp.assign_points(points, unsegmented_points)
-                    if len(temp.contained_points) > min_points_threshold:
+                    if len(temp.contained_points) > params['min_points_threshold']:
                         temp_spheres.append(temp)
                         weights.append(len(temp.contained_points))
 
@@ -429,25 +572,46 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
 
                 if len(temp_spheres) == 1:
                     merged_sphere = temp_spheres[0]
-                    capped_spread = min(merged_sphere.spread, sphere.spread * max_spread_growth if sphere.spread else merged_sphere.spread)
-                    merged_sphere.radius = max(capped_spread * sphere_factor, radius_min)
+                    capped_spread = min(merged_sphere.spread, parent_spread * params['max_spread_growth'])
+                    merged_sphere.radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
                     merged_sphere.spread = capped_spread
                 else:
                     sub_centers = np.array([s.center for s in temp_spheres])
                     sub_spreads = np.array([s.spread for s in temp_spheres])
                     merged_center = np.average(sub_centers, axis=0, weights=weights)
                     merged_spread = np.average(sub_spreads, weights=weights)
-                    capped_spread = min(merged_spread, sphere.spread * max_spread_growth if sphere.spread else merged_spread)
-                    merged_radius = max(capped_spread * sphere_factor, radius_min)
-                    merged_sphere = Sphere(merged_center, radius=merged_radius, thickness=sphere.thickness, spread=capped_spread)
+
+                     # === Compute pairwise distances ===
+                    diffs = sub_centers[:, np.newaxis, :] - sub_centers[np.newaxis, :, :]  # shape (n, n, 3)
+                    pairwise_dists = np.linalg.norm(diffs, axis=2)  # shape (n, n)
+
+                    # Upper triangle indices (excluding diagonal)
+                    n = len(sub_centers)
+                    i_indices, j_indices = np.triu_indices(n, k=1)
+
+                    flat_dists = pairwise_dists[i_indices, j_indices]
+
+                    # Compute pairwise weights as sum of weights of the two spheres
+                    pair_weights = weights[i_indices] + weights[j_indices]
+
+                    # Avoid division by zero
+                    if pair_weights.sum() > 0:
+                        weighted_avg_dist = np.average(flat_dists, weights=pair_weights)
+                    else:
+                        weighted_avg_dist = 0.0
+
+                    capped_spread = min(merged_spread, parent_spread * params['max_spread_growth'])
+                    adjusted_radius = max(capped_spread * params['sphere_factor'] + 0.5 * weighted_avg_dist, params['radius_min'])
+                    merged_sphere = Sphere(merged_center, radius=adjusted_radius, thickness=sphere.thickness, spread=capped_spread) # TODO
                     merged_sphere.assign_points(points, unsegmented_points)
 
-                if len(merged_sphere.contained_points) > min_points_threshold:
-                    segmentation_ids[merged_sphere.contained_points] = cluster_id
-                    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-                    new_spheres.append(merged_sphere)
+                # if len(merged_sphere.contained_points) > params['min_points_threshold']:
+                #     new_spheres.append(merged_sphere)
+                new_spheres.append(merged_sphere)
+                segmentation_ids[merged_sphere.contained_points] = cluster_id
+                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
                 cluster.add_sphere(merged_sphere)
-                cylinder_tracker.add_cylinder(sphere, merged_sphere, merged_radius)
+                cylinder_tracker.add_cylinder(sphere, merged_sphere, merged_sphere.spread)
 
         if not new_spheres:
             break
@@ -457,15 +621,13 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
     return cluster, segmentation_ids, unsegmented_points
 
 
-def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker ,connection_insertion_count=10, deferred_connections=None, max_distance=0.5, all_connection_points=None):
+def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker, params, deferred_connections=None):
     """
     Connects branch clusters to the queried outer sphere and clusters found within its radius.
     If a cluster is not connected, it is stored for deferred connection after the max search radius is reached.
     """
     if deferred_connections is None:
         deferred_connections = []
-    if all_connection_points is None:
-        all_connection_points = []
 
     connected_clusters = []
     unconnected_clusters = []
@@ -476,7 +638,7 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
             queried_center = np.array(queried_sphere.center)
             branch_centers = np.array([s.center for s in branch_outer_spheres])
             distances = np.linalg.norm(branch_centers - queried_center, axis=1)
-            valid_indices = np.where(distances < max_distance)[0]
+            valid_indices = np.where(distances < params['max_dist'])[0]
 
             if valid_indices.size > 0:
                 closest_idx = valid_indices[np.argmin(distances[valid_indices])]
@@ -513,10 +675,7 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
     return deferred_connections
 
     
-def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker,
-                 eps=0.5, min_samples=5, sphere_factor=1.5, radius_min=0.05, 
-                 smallest_search_radius=0.1, search_radius_step=0.05, max_search_radius=1.0, max_dist=0.5, 
-                 deferred_connections=None, sphere_radius=0.2, sphere_thickness=0.04, min_growth_points=5):
+def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, deferred_connections=None ):
     """
     Grows a cluster from an initial sphere using sphere-based expansion.
     
@@ -537,23 +696,29 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
     if deferred_connections is None:
         deferred_connections = []
 
-    cluster = SphereCluster(cluster_id=cluster_id)
-    cluster.add_sphere(initial_sphere)
+    # cluster = SphereCluster(cluster_id=cluster_id)
+    # cluster.add_sphere(initial_sphere)
 
-    unsegmented_points = np.array(unsegmented_points, dtype=int)
+    # unsegmented_points = np.array(unsegmented_points, dtype=int)
 
-    # Assign points to the initial sphere
-    initial_sphere.assign_points(points, unsegmented_points)
-    segmentation_ids[initial_sphere.contained_points] = cluster_id
-    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+    # # Assign points to the initial sphere
+    # initial_sphere.assign_points(points, unsegmented_points)
+    # segmentation_ids[initial_sphere.contained_points] = cluster_id
+    # unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+
+    # First, grow a complete initial cluster from the passed sphere
+    cluster, segmentation_ids, unsegmented_points = cluster_points(
+        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params
+    )
+    cluster_id += 1  # Prepare for next cluster ID
 
     # Skip points that are likely noise
-    if initial_sphere.contained_points.size < min_growth_points:
+    if initial_sphere.contained_points.size < params['min_growth_points']:
         cluster.get_outer_spheres()  # Ensure outer_spheres is set
         return cluster, segmentation_ids, unsegmented_points
 
-    search_radius = smallest_search_radius
-    while search_radius <= max_search_radius:
+    search_radius = params['smallest_search_radius']
+    while search_radius <= params['max_search_radius']:
         new_outer_spheres = cluster.get_outer_spheres()
 
         while new_outer_spheres:
@@ -564,23 +729,23 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
             random.shuffle(current_outer_spheres)
 
             for outer_sphere in current_outer_spheres:
-                neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, radius=search_radius)
+                neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
                 while neighborhood_points.size != 0:
                     #print(f"Check neighbourhood points, len {neighborhood_points.size}")
 
-                    seed_sphere = find_seed_sphere(points, neighborhood_points, sphere_radius, sphere_thickness)
+                    seed_sphere = find_seed_sphere(points, neighborhood_points, params['sphere_radius'], params['sphere_thickness'])
                     new_cluster, segmentation_ids, unsegmented_points = cluster_points(
-                        points, cluster_id, seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, eps, min_samples, sphere_factor, radius_min)
+                        points, cluster_id, seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params)
 
                     new_clusters.append(new_cluster)
                     cluster_id += 1
 
-                    neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, radius=search_radius)
+                    neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
 
                 #print("Continue since no neighbours")
 
-                deferred_connections, all_connection_points = connect_branch_to_main(
-                    outer_sphere, cluster, new_clusters, points, segmentation_ids, cylinder_tracker, inserted_points, deferred_connections, max_dist)
+                deferred_connections = connect_branch_to_main(
+                    outer_sphere, cluster, new_clusters, points, segmentation_ids, cylinder_tracker, deferred_connections=deferred_connections, params=params)
                 # Only add outer spheres from clusters that were successfully connected
                 for branch in new_clusters:
                     if branch not in deferred_connections:  # Ensure the cluster was connected
@@ -592,19 +757,16 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
                 outer_sphere.is_outer = False
 
         if not new_outer_spheres:
-            search_radius += search_radius_step
-            print(f"No new outer spheres found, increasing search radius to {search_radius:.2f}m. \nNumber of points to be segmented: {len(unsegmented_points)}")
+            search_radius += params['search_radius_step']
 
     return cluster, segmentation_ids, unsegmented_points
 
 
 
-def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, segmentation_ids, max_dist=0.4):
+def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, segmentation_ids, params):
     """
     Merges nearby clusters based on outer sphere proximity, starting from largest (by number of spheres).
     """
-    if all_connection_points is None:
-        all_connection_points = []
 
     merged_indices = set()
 
@@ -632,7 +794,6 @@ def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, s
                     continue
 
                 other_cluster = clusters[j]
-                print(f"Main id: {main_id}\tMerch id: {other_cluster.id}\tMain spheres: {len(main_cluster.spheres)}\tMerge spheres {len(other_cluster.spheres)}")
                 other_outer_spheres = other_cluster.outer_spheres
 
                 # Compute pairwise distances between current outer spheres and other outer spheres
@@ -643,7 +804,7 @@ def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, s
                 )
 
                 min_dist = np.min(dists)
-                if min_dist < max_dist:
+                if min_dist < params['max_dist']:
                     closest_clusters.append((j, dists))
 
             if closest_clusters:
@@ -680,7 +841,7 @@ def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, s
 
     # Return only clusters not merged into another
     remaining_clusters = [c for idx, c in enumerate(clusters) if idx not in merged_indices]
-    return remaining_clusters, segmentation_ids, all_connection_points
+    return remaining_clusters, segmentation_ids
                    
 
 
@@ -688,84 +849,84 @@ def main():
     print("Step 1: Loading the cloud")
     file_path = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp.txt"
     points = load_pointcloud(file_path)
-    points = filter_points_by_height(points, min_height=20.0)
 
-    print("Step 2: Centering and Init")
-    points, centroid = center_pointcloud(points)
-
+    print("Step 2: Init params and arrays")
     num_points = len(points)
     segmentation_ids = -np.ones(num_points, dtype=int)
     unsegmented_points = np.arange(num_points)
 
     clusters = []
     cluster_id = 0
-    sphere_radius_first = 0.2
-    sphere_radius_seed = 0.2
-    sphere_thickness = 0.05
-    eps = 0.07
-    min_samples = 5
-    sphere_factor = 2.0
-    radius_min = 0.1
-    inserted_points = 100
-
-    min_growth_points = 5
-
-    smallest_search_radius = 0.1
-    search_radius_step = 0.05
-    max_search_radius = 0.4
-    max_dist = 0.4
-
-    deferred_connections = []
-    all_connection_points = []
-
     cylinder_tracker = CylinderTracker()
 
-    print(f"Step 3: Create main cluster\nNumber of points to be segmented: {len(unsegmented_points)}")
+    params = {
+        'eps': 0.1,
+        'min_samples': 5,
+        'sphere_factor': 2.0,
+        'radius_min': 0.1,
+        'min_growth_points': 10,
+        'min_points_threshold': 5,
+        'max_spread_growth': 1.2,
+        'smallest_search_radius': 0.1,
+        'search_radius_step': 0.05,
+        'max_search_radius': 0.3,
+        'max_dist': 0.5,
+        'sphere_radius': 0.2,
+        'sphere_thickness': 0.08,
+        'clustering_algorithm': 'dbscan',
+        'clustering_linkage': 'single'
+    }
 
-    initial_sphere = initialize_first_sphere(points, 0.5, sphere_thickness)
+    deferred_connections = []
+
+
+    print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
+
+    # Initialize tqdm bar for total points
+    progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
+
+    initial_sphere = initialize_first_sphere(points, 0.5, params['sphere_thickness'])
     main_cluster, segmentation_ids, unsegmented_points = grow_cluster(
-        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, eps, min_samples, sphere_factor, 
-        radius_min, smallest_search_radius, search_radius_step, max_search_radius, max_dist, inserted_points, 
-        deferred_connections=deferred_connections)
+        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, deferred_connections=deferred_connections, params=params)
 
     clusters.append(main_cluster)
     cluster_id += 1
 
-    print(f"Step 4: Identify and grow additional clusters...\nNumber of points to be segmented: {len(unsegmented_points)}")
+    progress_bar.n = num_points - unsegmented_points.size
+    progress_bar.refresh()
 
     while unsegmented_points.size > 0:
-        print(f"Main cluster completed. {len(unsegmented_points)} points remain. Creating new cluster.")
 
-        new_seed_sphere = find_seed_sphere(points, unsegmented_points, sphere_radius_seed, sphere_thickness)
+        new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'])
         new_cluster, segmentation_ids, unsegmented_points = grow_cluster(
-            points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, eps, min_samples, sphere_factor, 
-            radius_min, smallest_search_radius, search_radius_step, max_search_radius, max_dist, inserted_points, 
-            deferred_connections=deferred_connections)
+            points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, deferred_connections=deferred_connections, params=params)
 
         clusters.append(new_cluster)
         cluster_id += 1
 
-    print("Step 5: Connect close clusters")
-    clusters, segmentation_ids, all_connection_points = final_merge_clusters(
-        clusters, points, cylinder_tracker, segmentation_ids, max_dist=max_dist
+        progress_bar.n = num_points - unsegmented_points.size
+        progress_bar.refresh()
+
+    print("Step 4: Merge close clusters")
+    clusters, segmentation_ids = final_merge_clusters(
+        clusters, points, cylinder_tracker, segmentation_ids, params
     )
 
-    print("Step 6: Append connection points")
-    if all_connection_points:
-        connection_points_array = np.vstack(all_connection_points)
-        points = np.vstack((points, connection_points_array))
-        print(f"Added {connection_points_array.shape[0]} connection points to the cloud.")
+    print("Step 5: Save output")
+    # output_file = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.txt"
+    # np.savetxt(output_file, points)
 
-    print("Step 7: Write the constructed point cloud")
-    points_retranslated = points + centroid
-    output_file = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.txt"
-    np.savetxt(output_file, points_retranslated)
-
+    # Save cylinders to CSV
     df = pd.DataFrame(cylinder_tracker.cylinder_records)
-    df.to_csv("data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.csv", index=False)
-    print("Cylinders saved to cylinders.csv")
+    csv_path = "data/postprocessed/PointTransformerV3/cylinders.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Cylinders saved to: {csv_path}")
 
-    print(f"Final point cloud saved to {output_file}.")
+    # Save full point cloud (segmentation output) with cylinders as mesh
+    ply_path = "data/postprocessed/PointTransformerV3/cylinders_mesh.ply"
+    cylinder_tracker.export_mesh_ply(ply_path)
+
+    print(f"✅ Done. Cylinders exported as mesh to: {ply_path}")
 
 if __name__ == "__main__":
     main()
