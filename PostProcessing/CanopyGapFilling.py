@@ -10,7 +10,7 @@ import random
 # TODO: Corrections and check clustering (very weird vor stem)
 
 class Sphere:
-    def __init__(self, center, radius, thickness, is_seed=False, spread=None):
+    def __init__(self, center, radius, thickness, is_seed=False, spread=None, incoming_cylinder_id=None):
         """
         Initialize a sphere.
         :param center: 3D coordinates of the sphere's center (array-like)
@@ -26,6 +26,8 @@ class Sphere:
         self.outer_points = np.array([], dtype=int)  # Indices of outer points
         self.is_outer = False
         self.spread = spread
+        self.incoming_cylinder_id = incoming_cylinder_id  # ID of the cylinder connecting from parent
+        self.outgoing_cylinder_ids = []   # IDs of cylinders stemming from this sphere
 
     def assign_points(self, points, indices):
         """
@@ -176,63 +178,105 @@ class SphereCluster:
         return candidate
 
 
+class Cylinder:
+    def __init__(self, id, start, end, radius, volume, parent_id=None, start_sphere=None, end_sphere=None, parent_cylinder_id=None):
+        self.id = id
+        self.start = np.array(start)
+        self.end = np.array(end)
+        self.radius = radius
+        self.volume = volume
+        self.parent_id = parent_id
+        self.start_sphere = start_sphere  # Sphere object
+        self.end_sphere = end_sphere    # Sphere object
+        self.parent_cylinder_id = parent_cylinder_id
+        self.child_cylinder_ids = []  # List of int
+
+    def to_dict(self):
+        return {
+            "ID": self.id,
+            "startX": self.start[0], "startY": self.start[1], "startZ": self.start[2],
+            "endX": self.end[0], "endY": self.end[1], "endZ": self.end[2],
+            "radius": self.radius,
+            "volume": self.volume,
+            "parentID": self.parent_cylinder_id,
+            "childrenIDs": self.child_cylinder_ids
+        }
+
+
 class CylinderTracker:
     def __init__(self):
-        self.cylinder_records = []
+        self.cylinders = {}
+        self.next_id = 0
 
-    def add_cylinder(self, sphere_a, sphere_b, radius):
+    def add_cylinder(self, sphere_a, sphere_b, radius, parent_id=None):
         start = sphere_a.center
         end = sphere_b.center
         height = np.linalg.norm(end - start)
-        volume = np.pi * radius**2 * height
-        self.cylinder_records.append({
-            "ID": len(self.cylinder_records),
-            "startX": start[0], "startY": start[1], "startZ": start[2],
-            "endX": end[0], "endY": end[1], "endZ": end[2],
-            "radius": radius,
-            "volume": volume
-        })
+        volume = np.pi * radius ** 2 * height
+        
+        cylinder_id = self.next_id
+        self.next_id += 1
+    
+        cylinder = Cylinder(
+            id=cylinder_id,
+            start=start,
+            end=end,
+            radius=radius,
+            volume=volume,
+            start_sphere=sphere_a,
+            end_sphere=sphere_b,
+            parent_cylinder_id=sphere_a.incoming_cylinder_id
+        )
 
-    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=20):
+        # Update linkage
+        sphere_a.outgoing_cylinder_ids.append(cylinder_id)
+        sphere_b.incoming_cylinder_id = cylinder_id
+
+        if cylinder.parent_cylinder_id is not None:
+            parent = self.cylinders[cylinder.parent_cylinder_id]
+            parent.child_cylinder_ids.append(cylinder_id)
+
+        self.cylinders[cylinder_id] = cylinder
+
+    def reassign_parent(self, parent_cylinder_id, child_start_sphere):
         """
-        Exports cylinders as triangle meshes to a PLY file.
-        Each cylinder is a mesh between start and end points with given radius.
+        Reassign the parent_cylinder_id of all cylinders starting from the given sphere.
         """
-        if not self.cylinder_records:
+        for child_id in child_start_sphere.outgoing_cylinder_ids:
+            cyl = self.cylinders[child_id]
+            cyl.parent_cylinder_id = parent_cylinder_id
+            # Update parent cylinder's child list
+            if parent_cylinder_id is not None:
+                self.cylinders[parent_cylinder_id].child_cylinder_ids.append(child_id)
+            # Recursive propagation
+            self.reassign_parent(child_id, cyl.end_sphere)
+
+    def export_to_dataframe(self):
+        return pd.DataFrame([cyl.to_dict() for cyl in self.cylinders.values()])
+
+    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=60):
+        if not self.cylinders:
             print("No cylinders to export.")
             return
 
-        radii = np.array([record["radius"] for record in self.cylinder_records])
+        radii = np.array([cyl.radius for cyl in self.cylinders.values()])
         r_min, r_max = np.min([radii.min(), 1e-4]), radii.max()
 
         def radius_to_color(radius):
-            # Normalize volume to 0..1
             t = (radius - r_min) / (r_max - r_min + 1e-8)
-            # Green → Yellow → Red gradient
             r = min(2 * t, 1.0)
             g = min(2 * (1 - t), 1.0)
             b = 0.0
             return [r, g, b]
-        
+
         mesh_list = []
+        for cyl in self.cylinders.values():
+            # if np.allclose(cyl.start, cyl.end):
+            #     continue
 
-        for record in self.cylinder_records:
-            start = np.array([record["startX"], record["startY"], record["startZ"]])
-            end = np.array([record["endX"], record["endY"], record["endZ"]])
-            radius = record["radius"]
-            volume = record["volume"]
-
-            if np.allclose(start, end):
-                continue
-
-            radius = max(radius, 1e-4)  # Clamp to minimum radius if needed
-
-            mesh = self._create_cylinder_between(start, end, radius, resolution)
-
-            # Color the mesh
-            color = radius_to_color(radius)
-            mesh.paint_uniform_color(color)
-
+            radius = max(cyl.radius, 1e-4)
+            mesh = self._create_cylinder_between(cyl.start, cyl.end, radius, resolution)
+            mesh.paint_uniform_color(radius_to_color(radius))
             mesh_list.append(mesh)
 
         if not mesh_list:
@@ -247,15 +291,10 @@ class CylinderTracker:
         print(f"Cylinder mesh exported to: {filename}")
 
     def _create_cylinder_between(self, p0, p1, radius, resolution):
-        """
-        Create a cylinder mesh between two points.
-        """
-        # Create cylinder along Z
         height = np.linalg.norm(p1 - p0)
         mesh = o3d.geometry.TriangleMesh.create_cylinder(radius=radius, height=height, resolution=resolution)
         mesh.compute_vertex_normals()
 
-        # Align with direction
         direction = p1 - p0
         direction /= np.linalg.norm(direction)
 
@@ -268,11 +307,110 @@ class CylinderTracker:
             kmat = np.array([[0, -v[2], v[1]],
                              [v[2], 0, -v[0]],
                              [-v[1], v[0], 0]])
-            R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (np.linalg.norm(v)**2))
+            R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (np.linalg.norm(v) ** 2))
 
         mesh.rotate(R, center=np.zeros(3))
         mesh.translate(p0)
         return mesh
+
+
+# class CylinderTracker:
+#     def __init__(self):
+#         self.cylinder_records = []
+
+#     def add_cylinder(self, sphere_a, sphere_b, radius):
+#         start = sphere_a.center
+#         end = sphere_b.center
+#         height = np.linalg.norm(end - start)
+#         volume = np.pi * radius**2 * height
+#         self.cylinder_records.append({
+#             "ID": len(self.cylinder_records),
+#             "startX": start[0], "startY": start[1], "startZ": start[2],
+#             "endX": end[0], "endY": end[1], "endZ": end[2],
+#             "radius": radius,
+#             "volume": volume
+#         })
+
+#     def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=20):
+#         """
+#         Exports cylinders as triangle meshes to a PLY file.
+#         Each cylinder is a mesh between start and end points with given radius.
+#         """
+#         if not self.cylinder_records:
+#             print("No cylinders to export.")
+#             return
+
+#         radii = np.array([record["radius"] for record in self.cylinder_records])
+#         r_min, r_max = np.min([radii.min(), 1e-4]), radii.max()
+
+#         def radius_to_color(radius):
+#             # Normalize volume to 0..1
+#             t = (radius - r_min) / (r_max - r_min + 1e-8)
+#             # Green → Yellow → Red gradient
+#             r = min(2 * t, 1.0)
+#             g = min(2 * (1 - t), 1.0)
+#             b = 0.0
+#             return [r, g, b]
+        
+#         mesh_list = []
+
+#         for record in self.cylinder_records:
+#             start = np.array([record["startX"], record["startY"], record["startZ"]])
+#             end = np.array([record["endX"], record["endY"], record["endZ"]])
+#             radius = record["radius"]
+#             volume = record["volume"]
+
+#             if np.allclose(start, end):
+#                 continue
+
+#             radius = max(radius, 1e-4)  # Clamp to minimum radius if needed
+
+#             mesh = self._create_cylinder_between(start, end, radius, resolution)
+
+#             # Color the mesh
+#             color = radius_to_color(radius)
+#             mesh.paint_uniform_color(color)
+
+#             mesh_list.append(mesh)
+
+#         if not mesh_list:
+#             print("⚠️ No valid cylinder meshes generated.")
+#             return
+
+#         combined = mesh_list[0]
+#         for m in mesh_list[1:]:
+#             combined += m
+
+#         o3d.io.write_triangle_mesh(filename, combined)
+#         print(f"Cylinder mesh exported to: {filename}")
+
+#     def _create_cylinder_between(self, p0, p1, radius, resolution):
+#         """
+#         Create a cylinder mesh between two points.
+#         """
+#         # Create cylinder along Z
+#         height = np.linalg.norm(p1 - p0)
+#         mesh = o3d.geometry.TriangleMesh.create_cylinder(radius=radius, height=height, resolution=resolution)
+#         mesh.compute_vertex_normals()
+
+#         # Align with direction
+#         direction = p1 - p0
+#         direction /= np.linalg.norm(direction)
+
+#         z_axis = np.array([0, 0, 1])
+#         v = np.cross(z_axis, direction)
+#         c = np.dot(z_axis, direction)
+#         if np.linalg.norm(v) < 1e-6:
+#             R = np.eye(3)
+#         else:
+#             kmat = np.array([[0, -v[2], v[1]],
+#                              [v[2], 0, -v[0]],
+#                              [-v[1], v[0], 0]])
+#             R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (np.linalg.norm(v)**2))
+
+#         mesh.rotate(R, center=np.zeros(3))
+#         mesh.translate(p0)
+#         return mesh
     
 def fit_circle_2d(points_2d):
     """
@@ -621,16 +759,13 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
     return cluster, segmentation_ids, unsegmented_points
 
 
-def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker, params, deferred_connections=None):
+def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker, params):
     """
     Connects branch clusters to the queried outer sphere and clusters found within its radius.
     If a cluster is not connected, it is stored for deferred connection after the max search radius is reached.
     """
-    if deferred_connections is None:
-        deferred_connections = []
 
     connected_clusters = []
-    unconnected_clusters = []
 
     if branch_clusters:
         branch_outer_spheres = np.array([s for cluster in branch_clusters for s in cluster.outer_spheres])
@@ -654,6 +789,11 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
                 # all_connection_points.append(connection_pts)
                 cylinder_tracker.add_cylinder( queried_sphere, s_branch, avg_spread )
 
+                # Get the ID of the cylinder just created
+                connection_cylinder_id = queried_sphere.outgoing_cylinder_ids[-1]
+                # Propagate this ID to all cylinders in the connected cluster
+                cylinder_tracker.reassign_parent(connection_cylinder_id, s_branch)
+
                 s_branch.is_outer = False
 
                 for branch_cluster in branch_clusters:
@@ -662,20 +802,11 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
                             segmentation_ids[idx] = 0
                         stem_cluster.add_sphere(sphere)
                     connected_clusters.append(branch_cluster)
-            else:
-                unconnected_clusters.extend(branch_clusters)
-        else:
-            unconnected_clusters.extend(branch_clusters)
 
-    if connected_clusters:
-        queried_sphere.is_outer = False
-    else:
-        deferred_connections.extend(unconnected_clusters)
-
-    return deferred_connections
+    return connected_clusters
 
     
-def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, deferred_connections=None ):
+def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, clusters ):
     """
     Grows a cluster from an initial sphere using sphere-based expansion.
     
@@ -693,43 +824,33 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
       - segmentation_ids: Updated segmentation array.
       - unsegmented_points: Updated list of unsegmented points.
     """
-    if deferred_connections is None:
-        deferred_connections = []
 
-    # cluster = SphereCluster(cluster_id=cluster_id)
-    # cluster.add_sphere(initial_sphere)
-
-    # unsegmented_points = np.array(unsegmented_points, dtype=int)
-
-    # # Assign points to the initial sphere
-    # initial_sphere.assign_points(points, unsegmented_points)
-    # segmentation_ids[initial_sphere.contained_points] = cluster_id
-    # unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-
-    # First, grow a complete initial cluster from the passed sphere
-    cluster, segmentation_ids, unsegmented_points = cluster_points(
+    # Step 1: Create initial main cluster
+    main_cluster, segmentation_ids, unsegmented_points = cluster_points(
         points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params
     )
-    cluster_id += 1  # Prepare for next cluster ID
+    cluster_id += 1
 
     # Skip points that are likely noise
     if initial_sphere.contained_points.size < params['min_growth_points']:
-        cluster.get_outer_spheres()  # Ensure outer_spheres is set
-        return cluster, segmentation_ids, unsegmented_points
+        main_cluster.get_outer_spheres()  # Ensure outer_spheres is set
+        #clusters.append(main_cluster)
+        return cluster_id, segmentation_ids, unsegmented_points
 
     search_radius = params['smallest_search_radius']
     while search_radius <= params['max_search_radius']:
-        new_outer_spheres = cluster.get_outer_spheres()
+        new_outer_spheres = main_cluster.get_outer_spheres()
 
         while new_outer_spheres:
-            new_clusters = []
-            #print("Integrate outer spheres")
             current_outer_spheres = new_outer_spheres
             new_outer_spheres = []
             random.shuffle(current_outer_spheres)
 
+            new_clusters = []  # Retained across outer spheres
+
             for outer_sphere in current_outer_spheres:
                 neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
+
                 while neighborhood_points.size != 0:
                     #print(f"Check neighbourhood points, len {neighborhood_points.size}")
 
@@ -742,24 +863,28 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
 
                     neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
 
-                #print("Continue since no neighbours")
+                connected_clusters = connect_branch_to_main(
+                    outer_sphere, main_cluster, new_clusters, points, segmentation_ids, cylinder_tracker, params=params
+                )
+                # Remove successfully connected clusters from new_clusters
+                new_clusters = [c for c in new_clusters if c not in connected_clusters]
 
-                deferred_connections = connect_branch_to_main(
-                    outer_sphere, cluster, new_clusters, points, segmentation_ids, cylinder_tracker, deferred_connections=deferred_connections, params=params)
-                # Only add outer spheres from clusters that were successfully connected
-                for branch in new_clusters:
-                    if branch not in deferred_connections:  # Ensure the cluster was connected
-                        for sphere in branch.get_outer_spheres():
-                            if sphere.is_outer and sphere not in new_outer_spheres:
-                                new_outer_spheres.append(sphere)
+                # Add outer spheres of connected clusters for continued growth
+                for connected in connected_clusters:
+                    for sphere in connected.get_outer_spheres():
+                        if sphere.is_outer and sphere not in new_outer_spheres:
+                            new_outer_spheres.append(sphere)
 
-            for outer_sphere in current_outer_spheres:
-                outer_sphere.is_outer = False
+                if len(connected_clusters) > 0:
+                    outer_sphere.is_outer = False
 
         if not new_outer_spheres:
             search_radius += params['search_radius_step']
 
-    return cluster, segmentation_ids, unsegmented_points
+    # Final step: Add main cluster and any unconnected new clusters
+    clusters.append(main_cluster)
+    clusters.extend(new_clusters)
+    return cluster_id, segmentation_ids, unsegmented_points
 
 
 
@@ -825,6 +950,9 @@ def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, s
                     # all_connection_points.append(conn_pts)
                     cylinder_tracker.add_cylinder( s1, s2, r )
 
+                    connection_cylinder_id = s1.outgoing_cylinder_ids[-1]
+                    cylinder_tracker.reassign_parent(connection_cylinder_id, s2)
+
                     # Reassign segmentation and merge spheres
                     for sphere in other_cluster.spheres:
                         segmentation_ids[sphere.contained_points] = main_id
@@ -870,7 +998,7 @@ def main():
         'smallest_search_radius': 0.1,
         'search_radius_step': 0.05,
         'max_search_radius': 0.3,
-        'max_dist': 0.5,
+        'max_dist': 0.3,
         'sphere_radius': 0.2,
         'sphere_thickness': 0.08,
         'clustering_algorithm': 'dbscan',
@@ -886,11 +1014,8 @@ def main():
     progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
 
     initial_sphere = initialize_first_sphere(points, 0.5, params['sphere_thickness'])
-    main_cluster, segmentation_ids, unsegmented_points = grow_cluster(
-        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, deferred_connections=deferred_connections, params=params)
-
-    clusters.append(main_cluster)
-    cluster_id += 1
+    cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
+        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters)
 
     progress_bar.n = num_points - unsegmented_points.size
     progress_bar.refresh()
@@ -898,11 +1023,8 @@ def main():
     while unsegmented_points.size > 0:
 
         new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'])
-        new_cluster, segmentation_ids, unsegmented_points = grow_cluster(
-            points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, deferred_connections=deferred_connections, params=params)
-
-        clusters.append(new_cluster)
-        cluster_id += 1
+        cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
+            points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters)
 
         progress_bar.n = num_points - unsegmented_points.size
         progress_bar.refresh()
@@ -912,12 +1034,18 @@ def main():
         clusters, points, cylinder_tracker, segmentation_ids, params
     )
 
+    print(f"{len(clusters)} clusters left")
+    roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
+    print(f"🌳 Number of root cylinders: {len(roots)}")
+    for idx, cl in enumerate(clusters):
+        print(f"Cluster {idx}: {len(cl.spheres)} spheres")
+
     print("Step 5: Save output")
     # output_file = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.txt"
     # np.savetxt(output_file, points)
 
     # Save cylinders to CSV
-    df = pd.DataFrame(cylinder_tracker.cylinder_records)
+    df = cylinder_tracker.export_to_dataframe()
     csv_path = "data/postprocessed/PointTransformerV3/cylinders.csv"
     df.to_csv(csv_path, index=False)
     print(f"✅ Cylinders saved to: {csv_path}")
