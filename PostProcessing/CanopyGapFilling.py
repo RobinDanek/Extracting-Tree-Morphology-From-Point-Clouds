@@ -312,105 +312,6 @@ class CylinderTracker:
         mesh.rotate(R, center=np.zeros(3))
         mesh.translate(p0)
         return mesh
-
-
-# class CylinderTracker:
-#     def __init__(self):
-#         self.cylinder_records = []
-
-#     def add_cylinder(self, sphere_a, sphere_b, radius):
-#         start = sphere_a.center
-#         end = sphere_b.center
-#         height = np.linalg.norm(end - start)
-#         volume = np.pi * radius**2 * height
-#         self.cylinder_records.append({
-#             "ID": len(self.cylinder_records),
-#             "startX": start[0], "startY": start[1], "startZ": start[2],
-#             "endX": end[0], "endY": end[1], "endZ": end[2],
-#             "radius": radius,
-#             "volume": volume
-#         })
-
-#     def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=20):
-#         """
-#         Exports cylinders as triangle meshes to a PLY file.
-#         Each cylinder is a mesh between start and end points with given radius.
-#         """
-#         if not self.cylinder_records:
-#             print("No cylinders to export.")
-#             return
-
-#         radii = np.array([record["radius"] for record in self.cylinder_records])
-#         r_min, r_max = np.min([radii.min(), 1e-4]), radii.max()
-
-#         def radius_to_color(radius):
-#             # Normalize volume to 0..1
-#             t = (radius - r_min) / (r_max - r_min + 1e-8)
-#             # Green → Yellow → Red gradient
-#             r = min(2 * t, 1.0)
-#             g = min(2 * (1 - t), 1.0)
-#             b = 0.0
-#             return [r, g, b]
-        
-#         mesh_list = []
-
-#         for record in self.cylinder_records:
-#             start = np.array([record["startX"], record["startY"], record["startZ"]])
-#             end = np.array([record["endX"], record["endY"], record["endZ"]])
-#             radius = record["radius"]
-#             volume = record["volume"]
-
-#             if np.allclose(start, end):
-#                 continue
-
-#             radius = max(radius, 1e-4)  # Clamp to minimum radius if needed
-
-#             mesh = self._create_cylinder_between(start, end, radius, resolution)
-
-#             # Color the mesh
-#             color = radius_to_color(radius)
-#             mesh.paint_uniform_color(color)
-
-#             mesh_list.append(mesh)
-
-#         if not mesh_list:
-#             print("⚠️ No valid cylinder meshes generated.")
-#             return
-
-#         combined = mesh_list[0]
-#         for m in mesh_list[1:]:
-#             combined += m
-
-#         o3d.io.write_triangle_mesh(filename, combined)
-#         print(f"Cylinder mesh exported to: {filename}")
-
-#     def _create_cylinder_between(self, p0, p1, radius, resolution):
-#         """
-#         Create a cylinder mesh between two points.
-#         """
-#         # Create cylinder along Z
-#         height = np.linalg.norm(p1 - p0)
-#         mesh = o3d.geometry.TriangleMesh.create_cylinder(radius=radius, height=height, resolution=resolution)
-#         mesh.compute_vertex_normals()
-
-#         # Align with direction
-#         direction = p1 - p0
-#         direction /= np.linalg.norm(direction)
-
-#         z_axis = np.array([0, 0, 1])
-#         v = np.cross(z_axis, direction)
-#         c = np.dot(z_axis, direction)
-#         if np.linalg.norm(v) < 1e-6:
-#             R = np.eye(3)
-#         else:
-#             kmat = np.array([[0, -v[2], v[1]],
-#                              [v[2], 0, -v[0]],
-#                              [-v[1], v[0], 0]])
-#             R = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (np.linalg.norm(v)**2))
-
-#         mesh.rotate(R, center=np.zeros(3))
-#         mesh.translate(p0)
-#         return mesh
     
 def fit_circle_2d(points_2d):
     """
@@ -798,6 +699,8 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
 
                 for branch_cluster in branch_clusters:
                     for sphere in branch_cluster.spheres:
+                        if sphere.is_seed:
+                            sphere.is_seed = False
                         for idx in sphere.contained_points:
                             segmentation_ids[idx] = 0
                         stem_cluster.add_sphere(sphere)
@@ -825,28 +728,28 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
       - unsegmented_points: Updated list of unsegmented points.
     """
 
+    # # Skip points that are likely noise
+    # if initial_sphere.contained_points.size < params['min_growth_points']:
+    #     #clusters.append(main_cluster)
+    #     return cluster_id, segmentation_ids, unsegmented_points
+
     # Step 1: Create initial main cluster
     main_cluster, segmentation_ids, unsegmented_points = cluster_points(
         points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params
     )
     cluster_id += 1
 
-    # Skip points that are likely noise
-    if initial_sphere.contained_points.size < params['min_growth_points']:
-        main_cluster.get_outer_spheres()  # Ensure outer_spheres is set
-        #clusters.append(main_cluster)
-        return cluster_id, segmentation_ids, unsegmented_points
 
     search_radius = params['smallest_search_radius']
     while search_radius <= params['max_search_radius']:
         new_outer_spheres = main_cluster.get_outer_spheres()
 
+        new_clusters = []
+
         while new_outer_spheres:
             current_outer_spheres = new_outer_spheres
             new_outer_spheres = []
             random.shuffle(current_outer_spheres)
-
-            new_clusters = []  # Retained across outer spheres
 
             for outer_sphere in current_outer_spheres:
                 neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
@@ -878,12 +781,12 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
                 if len(connected_clusters) > 0:
                     outer_sphere.is_outer = False
 
-        if not new_outer_spheres:
-            search_radius += params['search_radius_step']
+        clusters.extend(new_clusters)
+
+        search_radius += params['search_radius_step']
 
     # Final step: Add main cluster and any unconnected new clusters
     clusters.append(main_cluster)
-    clusters.extend(new_clusters)
     return cluster_id, segmentation_ids, unsegmented_points
 
 
@@ -956,6 +859,8 @@ def final_merge_clusters(clusters, points,  cylinder_tracker: CylinderTracker, s
                     # Reassign segmentation and merge spheres
                     for sphere in other_cluster.spheres:
                         segmentation_ids[sphere.contained_points] = main_id
+                        if sphere.is_seed:
+                            sphere.is_seed = False
                     main_cluster.add_spheres(other_cluster.spheres)
 
                     merged_indices.add(j)
@@ -1022,7 +927,17 @@ def main():
 
     while unsegmented_points.size > 0:
 
+        print(unsegmented_points.size)
+
         new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'])
+        new_seed_sphere.assign_points(points, unsegmented_points)
+
+        if new_seed_sphere.contained_points.size < params['min_growth_points']:
+            # Mark these points so they won’t be reused
+            segmentation_ids[new_seed_sphere.contained_points] = -2  # Or some special ignored value
+            unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+            continue
+
         cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
             points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters)
 
@@ -1037,8 +952,8 @@ def main():
     print(f"{len(clusters)} clusters left")
     roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
     print(f"🌳 Number of root cylinders: {len(roots)}")
-    for idx, cl in enumerate(clusters):
-        print(f"Cluster {idx}: {len(cl.spheres)} spheres")
+    # for idx, cl in enumerate(clusters):
+    #     print(f"Cluster {idx}: {len(cl.spheres)} spheres")
 
     print("Step 5: Save output")
     # output_file = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.txt"
