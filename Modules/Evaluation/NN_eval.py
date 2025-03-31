@@ -4,13 +4,13 @@ import torch.nn as nn
 from Modules.DataLoading.TreeSet import *
 from Modules.DataLoading.RasterizedTreeSet import *
 from Modules.Evaluation.ModelLoaders import load_model
+from Modules.Utils import fit_power_law, generate_log_bins
 
 import pandas as pd
 import numpy as np
 import json
 from scipy.spatial import cKDTree
 from scipy import stats
-from scipy.optimize import curve_fit
 from fastprogress.fastprogress import master_bar, progress_bar
 
 def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
@@ -440,23 +440,6 @@ def plot_nn_distances_subplots(nnd_orig, nnd_pred, tree_plots, plot_savepath=Non
     import numpy as np
     import matplotlib.pyplot as plt
     from scipy.stats import binned_statistic
-
-    # Helper function: generate logarithmic bins
-    def generate_log_bins(min_val, max_val):
-        bins = []
-        order_min = int(np.floor(np.log10(min_val)))
-        order_max = int(np.ceil(np.log10(max_val)))
-        for order in range(order_min, order_max + 1):
-            for m in range(1, 10):
-                value = m * 10**order
-                if min_val <= value <= max_val:
-                    bins.append(value)
-        bins = np.array(sorted(bins))
-        if bins[0] > min_val:
-            bins = np.insert(bins, 0, min_val)
-        if bins[-1] < max_val:
-            bins = np.append(bins, max_val)
-        return bins
 
     # Identify the unique plot identifiers (e.g., 3, 4, 6, 8)
     unique_plots = sorted(set(tree_plots))
