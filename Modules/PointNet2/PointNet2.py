@@ -61,14 +61,20 @@ class PointNet2(nn.Module):
 
         elif depth == 6:
             # Original 4-layer configuration
-            self.sa1 = PointNetSetAbstraction(50, 0.1, 32, input_dim, [32, 32, 64], False)
-            self.sa2 = PointNetSetAbstraction(20, 0.2, 32, 64 + 3, [64, 64, 128], False)
-            self.sa3 = PointNetSetAbstraction(10, 0.4, 32, 128 + 3, [128, 128, 256], False)
-            self.sa4 = PointNetSetAbstraction(4, 0.8, 32, 256 + 3, [256, 256, 512], False)
+            self.sa1 = PointNetSetAbstractionMsg(
+                npoint=500,                          # Increase number of sample points
+                radius_list=[0.02, 0.04, 0.08],        # Multiple scales: very fine to modest context
+                nsample_list=[16, 32, 32],             # Fewer points for smallest radius, more for larger ones
+                in_channel=input_dim,                # Your input feature dimension
+                mlp_list=[[16, 16, 32], [32, 32, 64], [64, 64, 64]]  # Adjust MLP sizes as needed
+            )
+            self.sa2 = PointNetSetAbstraction(100, 0.2, 32, 160 + 3, [64, 64, 128], False)
+            self.sa3 = PointNetSetAbstraction(50, 0.4, 32, 128 + 3, [128, 128, 256], False)
+            self.sa4 = PointNetSetAbstraction(20, 0.8, 32, 256 + 3, [256, 256, 512], False)
             
             self.fp4 = PointNetFeaturePropagation(768, [256, 256])
             self.fp3 = PointNetFeaturePropagation(384, [256, 256])
-            self.fp2 = PointNetFeaturePropagation(320, [256, 128])
+            self.fp2 = PointNetFeaturePropagation(416, [256, 128])
             self.fp1 = PointNetFeaturePropagation(128, [128, 128, 128])
 
         elif depth == 3:
@@ -84,8 +90,8 @@ class PointNet2(nn.Module):
             
         elif depth == 2:
             # Two-layer configuration with radii: 0.1 and 0.3
-            self.sa1 = PointNetSetAbstraction(1024, 0.1, 32, input_dim, [32, 32, 64], False)
-            self.sa2 = PointNetSetAbstraction(256, 0.3, 32, 64 + 3, [64, 64, 128], False)
+            self.sa1 = PointNetSetAbstraction(1024, 0.02, 32, input_dim, [32, 32, 64], False)
+            self.sa2 = PointNetSetAbstraction(256, 0.2, 32, 64 + 3, [64, 64, 128], False)
             
             self.fp2 = PointNetFeaturePropagation(64 + 128, [128, 128, 128])
             self.fp1 = PointNetFeaturePropagation(128, [128, 128, 128])
