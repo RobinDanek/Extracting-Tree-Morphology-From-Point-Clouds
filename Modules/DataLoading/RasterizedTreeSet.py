@@ -149,7 +149,7 @@ class RasterizedTreeSet_Flattened(Dataset):
 
 
 class RasterizedTreeSet_Hierarchical(Dataset):
-    def __init__(self, json_paths, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20):
+    def __init__(self, json_paths, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20, single_sample=False):
         """
         Args:
             json_paths (str) or list(str): Path(s) to the JSON file(s) with tree and raster metadata.
@@ -177,6 +177,13 @@ class RasterizedTreeSet_Hierarchical(Dataset):
                     self.data[key] = value  # Add new key
 
         self.tree_keys = list(self.data.keys())
+
+        # If single_sample is enabled, only keep one tree
+        if single_sample and self.tree_keys:
+            selected_tree = self.tree_keys[0]
+            self.data = {selected_tree: self.data[selected_tree]}
+            self.tree_keys = [selected_tree]
+
         self.training = training
         self.logger = logger
         self.data_augmentations = data_augmentations
@@ -591,6 +598,25 @@ def get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot, logge
         json_files_test, training=False, logger=logger, 
         data_augmentations=data_augmentations, noise_distance=noise_distance,
         minibatch_size=minibatch_size
+        )
+    
+    return trainset, testset
+
+def get_rasterized_treesets_hierarchical_single_sample( data_root, logger=None, data_augmentations=None, noise_distance=0.05, raster_size=1.0, stride=None, minibatch_size=20 ):
+
+    train_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'rasters_metadata_trainset.json')
+    val_file = os.path.join(data_root, f'rasterized_R{raster_size:.1f}_S{stride:.1f}', 'rasters_metadata_testset.json')
+
+    trainset = RasterizedTreeSet_Hierarchical( 
+        train_file, training=True, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        minibatch_size=minibatch_size, single_sample=True
+        )
+    
+    testset = RasterizedTreeSet_Hierarchical( 
+        val_file, training=False, logger=logger, 
+        data_augmentations=data_augmentations, noise_distance=noise_distance,
+        minibatch_size=minibatch_size, single_sample=True
         )
     
     return trainset, testset

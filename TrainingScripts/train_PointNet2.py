@@ -222,6 +222,13 @@ if __name__ == "__main__":
                 batch_size=args.batch_size
                 )
 
+        if args.overfit and args.hierarchical:
+            trainset, valset = get_rasterized_treesets_hierarchical_single_sample(
+                data_root, noise_distance=args.noise_threshold,
+                raster_size=args.raster_size, stride=args.raster_stride,
+                minibatch_size=args.minibatch_size
+            )
+
         if args.hierarchical and args.streaming:
             train_loader = get_dataloader(trainset, batch_size, num_workers=0, training=True, collate_fn=trainset.collate_fn_streaming)
             val_loader = get_dataloader(valset, batch_size, num_workers=0, training=False, collate_fn=valset.collate_fn_streaming)
