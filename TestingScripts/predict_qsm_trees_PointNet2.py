@@ -43,10 +43,18 @@ def makePredictions(offset_model, noise_model):
     plot_6_loader = get_dataloader(plot_6_set, 1, num_workers=0, training=False, collate_fn=plot_6_set.collate_fn_voxel)
     plot_8_loader = get_dataloader(plot_8_set, 1, num_workers=0, training=False, collate_fn=plot_8_set.collate_fn_voxel)
 
-    raster_plot_3_set = RasterizedTreeSet( os.path.join(data_dir, 'qsm_set_3.json'), training=False )
-    raster_plot_4_set = RasterizedTreeSet( os.path.join(data_dir, 'qsm_set_4.json'), training=False )
-    raster_plot_6_set = RasterizedTreeSet( os.path.join(data_dir, 'qsm_set_6.json'), training=False )
-    raster_plot_8_set = RasterizedTreeSet( os.path.join(data_dir, 'qsm_set_8.json'), training=False )
+    raster_plot_3_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_dir, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_3.json'), noise_distance=0.1, minibatch_size=60
+                    )
+    raster_plot_4_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_dir, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_4.json'), noise_distance=0.1, minibatch_size=60
+                    )
+    raster_plot_6_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_dir, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_6.json'), noise_distance=0.1, minibatch_size=60
+                    )
+    raster_plot_8_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_dir, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_8.json'), noise_distance=0.1, minibatch_size=60
+                    )
 
     raster_plot_3_loader = get_dataloader(raster_plot_3_set, 1, num_workers=0, training=False, collate_fn=raster_plot_3_set.collate_fn_streaming)
     raster_plot_4_loader = get_dataloader(raster_plot_4_set, 1, num_workers=0, training=False, collate_fn=raster_plot_4_set.collate_fn_streaming)

@@ -10,31 +10,65 @@ import pandas as pd
 import numpy as np
 import json
 from scipy.spatial import cKDTree
+from scipy.optimize import curve_fit
 from scipy import stats
 from fastprogress.fastprogress import master_bar, progress_bar
 
-def nn_eval(model_dict, rasterized_data=True, plot_savedir=None):
+def nn_eval(model_dict, model_type, rasterized_data=True, plot_savedir=None, load_data=False):
 
     # First calculate the knns of the original and the transformed clouds
-    if not rasterized_data:
-        nnd_orig, nnd_pred, plot_trees = makePredictionsWholeTree(model_dict)
+    if load_data:
+        nnd_orig, nnd_pred = calculate_nnds_from_predictions(model_type)
     else:
-        nnd_orig, nnd_pred = makePredictionsRasterized(model_dict)
+        if not rasterized_data:
+            nnd_orig, nnd_pred, plot_trees = makePredictionsWholeTree(model_dict)
+        else:
+            nnd_orig, nnd_pred = makePredictionsRasterized(model_dict)
 
     plot_savepath=None
     if plot_savedir:
         plot_savepath = os.path.join(plot_savedir, f'nn_plot.png')
     # Now perform a fit and plot
-    plot_nn_distances( nnd_orig, nnd_pred, plot_trees, plot_savepath )
+    plot_nn_distances( nnd_orig, nnd_pred, model_type, plot_savepath=plot_savepath )
 
-    if plot_savedir:
-        plot_savepath = os.path.join(plot_savedir, f'nn_plot_subplots.png')
-    # Now perform a fit and plot
-    plot_nn_distances_subplots( nnd_orig, nnd_pred, plot_trees, plot_savepath )
+    # if plot_savedir:
+    #     plot_savepath = os.path.join(plot_savedir, f'nn_plot_subplots.png')
+    # # Now perform a fit and plot
+    # plot_nn_distances_subplots( nnd_orig, nnd_pred, plot_savepath=plot_savepath )
 
     return
 
 ############ PREDICTION FUNCTIONS ######
+
+def calculate_nnds_from_predictions(model_type):
+    if model_type=="treelearn":
+        cloud_dir = "data/predicted/TreeLearn/raw"
+    if model_type=="pointtransformerv3":
+        cloud_dir = "data/predicted/PointTransformerV3/raw"
+    if model_type=="pointnet2":
+        cloud_dir = "data/predicted/PointNet2/raw"
+
+    cloud_files = [os.path.join(cloud_dir, f) for f in os.listdir(cloud_dir) if f.endswith('full.txt')]
+
+    nnd_orig = []
+    nnd_pred = []
+
+    for cloud_file in cloud_files:
+        cloud = np.loadtxt(cloud_file)
+
+        original_points = cloud[:, 0:3]
+        transformed_points = cloud[:, 0:3] + cloud[:, 3:6]
+
+        nnd_orig_tree = nearestNeighbourDistances(original_points, k=1)[1]
+        # Calculate original distances
+        nnd_orig.extend( nnd_orig_tree.tolist() )
+
+        nnd_pred_tree = nearestNeighbourDistances( transformed_points, k=1 )[1]
+
+        nnd_pred.extend( nnd_pred_tree.tolist() )
+
+    return nnd_orig, nnd_pred
+
 
 def makePredictionsWholeTree(model_dict):
 
@@ -96,17 +130,17 @@ def makePredictionsRasterized(model_dict):
     _, data_plot_6 = get_treesets_plot_split(data_root, test_plot=6, noise_distance=0.1)
     _, data_plot_8 = get_treesets_plot_split(data_root, test_plot=8, noise_distance=0.1)
 
-    _, raster_data_plot_3 = get_rasterized_treesets_hierarchical_plot_split(
-                        data_root, test_plot=3, noise_distance=0.1, raster_size=1.0, stride=1.0, minibatch_size=60
+    raster_plot_3_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_3.json'), noise_distance=0.1, minibatch_size=60
                     )
-    _, raster_data_plot_4 = get_rasterized_treesets_hierarchical_plot_split(
-                        data_root, test_plot=4, noise_distance=0.1, raster_size=1.0, stride=1.0, minibatch_size=60
+    raster_plot_4_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_4.json'), noise_distance=0.1, minibatch_size=60
                     )
-    _, raster_data_plot_6 = get_rasterized_treesets_hierarchical_plot_split(
-                        data_root, test_plot=6, noise_distance=0.1, raster_size=1.0, stride=1.0, minibatch_size=60
+    raster_plot_6_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_6.json'), noise_distance=0.1, minibatch_size=60
                     )
-    _, raster_data_plot_8 = get_rasterized_treesets_hierarchical_plot_split(
-                        data_root, test_plot=8, noise_distance=0.1, raster_size=1.0, stride=1.0, minibatch_size=60
+    raster_plot_8_set = RasterizedTreeSet_Hierarchical(
+                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_8.json'), noise_distance=0.1, minibatch_size=60
                     )
 
     plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=data_plot_3.collate_fn_voxel)
@@ -114,10 +148,10 @@ def makePredictionsRasterized(model_dict):
     plot_6_loader = get_dataloader(data_plot_6, 1, num_workers=0, training=False, collate_fn=data_plot_6.collate_fn_voxel)
     plot_8_loader = get_dataloader(data_plot_8, 1, num_workers=0, training=False, collate_fn=data_plot_8.collate_fn_voxel)
 
-    raster_plot_3_loader = get_dataloader(raster_data_plot_3, 1, num_workers=0, training=False, collate_fn=raster_data_plot_3.collate_fn_streaming)
-    raster_plot_4_loader = get_dataloader(raster_data_plot_4, 1, num_workers=0, training=False, collate_fn=raster_data_plot_4.collate_fn_streaming)
-    raster_plot_6_loader = get_dataloader(raster_data_plot_6, 1, num_workers=0, training=False, collate_fn=raster_data_plot_6.collate_fn_streaming)
-    raster_plot_8_loader = get_dataloader(raster_data_plot_8, 1, num_workers=0, training=False, collate_fn=raster_data_plot_8.collate_fn_streaming)
+    raster_plot_3_loader = get_dataloader(raster_plot_3_set, 1, num_workers=0, training=False, collate_fn=raster_plot_3_set.collate_fn_streaming)
+    raster_plot_4_loader = get_dataloader(raster_plot_4_set, 1, num_workers=0, training=False, collate_fn=raster_plot_4_set.collate_fn_streaming)
+    raster_plot_6_loader = get_dataloader(raster_plot_6_set, 1, num_workers=0, training=False, collate_fn=raster_plot_6_set.collate_fn_streaming)
+    raster_plot_8_loader = get_dataloader(raster_plot_8_set, 1, num_workers=0, training=False, collate_fn=raster_plot_8_set.collate_fn_streaming)
 
     plot_loaders = [plot_3_loader, plot_4_loader, plot_6_loader, plot_8_loader]
     raster_plot_loaders = [raster_plot_3_loader, raster_plot_4_loader, raster_plot_6_loader, raster_plot_8_loader]
@@ -130,21 +164,54 @@ def makePredictionsRasterized(model_dict):
         model = model.cuda()
         model.eval()
 
-        for tree, raster_tree in progress_bar(zip(plot_loader, raster_plot_loader), master=None, total=len(plot_loader)):
-            coords = tree["coords"].numpy()
+        # Convert raster_plot_loader to a list if it's not already, so you can iterate multiple times.
+        raster_trees = list(raster_plot_loader)
+        
+        for tree in progress_bar(plot_loader, master=None, total=len(plot_loader)):
+            tree_coords = tree["coords"].numpy()
+            tree_size = tree_coords.shape[0]
+            #print(tree_size)
+            
+            # Look for a matching rasterized tree.
+            matching_raster = None
+            for raster_tree in raster_trees:
+                print(int(raster_tree["cloud_length"]))
+                if int(raster_tree["cloud_length"]) == tree_size:
+                    matching_raster = raster_tree
+                    break
+                    
+            if matching_raster is None:
+                print(f"No matching rasterized tree found for tree of size {tree_size}. Skipping inference.")
+                continue
 
-            nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
-            # Calculate original distances
-            nnd_orig.extend( nnd_orig_tree.tolist() )
+            # Compute nearest neighbor distances for the original cloud.
+            nnd_orig_tree = nearestNeighbourDistances(tree_coords, k=1)[1]
+            nnd_orig.extend(nnd_orig_tree.tolist())
 
-            # Make predictions
+            # Run inference on the matching rasterized tree.
             with torch.no_grad():
-                output = model.forward_hierarchical_streaming(raster_tree, return_loss=False, scaler=None)
-
+                output = model.forward_hierarchical_streaming(matching_raster, return_loss=False, scaler=None)
             offset_predictions = output["offset_predictions"].cpu().numpy()
 
-            nnd_pred_tree = nearestNeighbourDistances( coords + offset_predictions, k=1 )[1]
-            nnd_pred.extend( nnd_pred_tree.tolist() )
+            # Compute nearest neighbor distances for the offset-adjusted cloud.
+            nnd_pred_tree = nearestNeighbourDistances(tree_coords + offset_predictions, k=1)[1]
+            nnd_pred.extend(nnd_pred_tree.tolist())
+
+        # for tree, raster_tree in progress_bar(zip(plot_loader, raster_plot_loader), master=None, total=len(plot_loader)):
+        #     coords = tree["coords"].numpy()
+
+        #     nnd_orig_tree = nearestNeighbourDistances(coords, k=1)[1]
+        #     # Calculate original distances
+        #     nnd_orig.extend( nnd_orig_tree.tolist() )
+
+        #     # Make predictions
+        #     with torch.no_grad():
+        #         output = model.forward_hierarchical_streaming(raster_tree, return_loss=False, scaler=None)
+
+        #     offset_predictions = output["offset_predictions"].cpu().numpy()
+
+        #     nnd_pred_tree = nearestNeighbourDistances( coords + offset_predictions, k=1 )[1]
+        #     nnd_pred.extend( nnd_pred_tree.tolist() )
 
         print(f"Finished plot {plot}")
 
@@ -220,70 +287,104 @@ def fit_power_law(x, y):
     return x_fit, y_fit, a, b, a_err, b_err
 
 
-def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None,
+def plot_nn_distances(nnd_orig, nnd_pred, model_type, tree_plots=None, plot_savepath=None,
                       color_by_plot=False, show_scatter=False, show_fit=False):
-    """
-    Plots NN distances with a custom nonlinear transformed scale applied to both axes.
-    Error bars and fit lines are also transformed, and both axes are shown with equal spacing.
-    """
     import numpy as np
     import matplotlib.pyplot as plt
     from scipy.stats import binned_statistic
+    from scipy.optimize import curve_fit
+
+    # # === Font size settings ===
+    # plt.rcParams.update({
+    #     'font.size': 14,            # Base font size
+    #     'axes.titlesize': 18,       # Title
+    #     'axes.labelsize': 16,       # Axis labels
+    #     'xtick.labelsize': 12,      # Tick labels
+    #     'ytick.labelsize': 12,
+    #     'legend.fontsize': 14,      # Legend
+    #     'figure.titlesize': 20      # Figure title (if used)
+    # })
 
     def custom_scale(val):
         val = np.asarray(val)
         scaled = np.zeros_like(val)
-        mask1 = val < 0.01
-        scaled[mask1] = 0
-        mask2 = (val >= 0.01) & (val < 0.1)
-        scaled[mask2] = (val[mask2] - 0.01) / (0.1 - 0.01) * 9 + 1
-        mask3 = (val >= 0.1) & (val <= 1.0)
-        scaled[mask3] = (val[mask3] - 0.1) / (1.0 - 0.1) * 10 + 10
-        mask4 = val > 1.0
-        scaled[mask4] = (val[mask4] - 1.0) / 0.1 + 20
+
+        # 0–10cm (0.0–0.1): scaled to 0–10
+        mask1 = val < 0.1
+        scaled[mask1] = val[mask1] / 0.1 * 10
+
+        # 10–100cm (0.1–1.0): scaled to 10–20
+        mask2 = (val >= 0.1) & (val <= 1.0)
+        scaled[mask2] = (val[mask2] - 0.1) / 0.9 * 10 + 10
+
+        # 100–110cm (1.0–1.1): scaled to 20–21
+        mask3 = (val > 1.0) & (val <= 1.1)
+        scaled[mask3] = (val[mask3] - 1.0) / 0.1 + 20
+
+        # >110cm: cap at 21
+        scaled[val > 1.1] = 21
+
         return scaled
 
     def custom_label(val):
         if val < 0.01:
-            return "<1cm"
-        elif val < 0.1:
-            return f"{val*100:.0f}cm"
+            return "0cm"
         elif val < 1.0:
             return f"{val*100:.0f}cm"
+        elif val == 1.0:
+            return "1m"
         else:
-            return f"{val:.0f}m"
+            return ">1m"
 
     nnd_orig = np.array(nnd_orig)
     nnd_pred = np.array(nnd_pred)
 
+    # Power law fit in 1cm–1m range
     fit_mask = (nnd_orig >= 0.01) & (nnd_orig <= 1.0)
     fit_mask &= np.isfinite(nnd_orig) & np.isfinite(nnd_pred)
     x_fit_data = nnd_orig[fit_mask]
     y_fit_data = nnd_pred[fit_mask]
     x_fit, y_fit, a, b, a_err, b_err = fit_power_law(x_fit_data, y_fit_data)
 
-    max_val = np.max(nnd_orig)
-    bins = [0.0, 0.01]
-    bins += list(np.linspace(0.01, 0.1, 10))
+    # Bin edges: <1cm, 1–10cm, 10–100cm, and >1m (np.inf for points larger than 1m)
+    bins = [0.0]
+    bins += list(np.linspace(0.01, 0.09, 9))
     bins += list(np.linspace(0.1, 1.0, 10))
-    m = 2.0
-    while m <= max_val:
-        bins.append(m)
-        m += 1.0
-    bins.append(max_val)
-    bins = sorted(set(bins))
+    bins.append(np.inf)
 
+    # Binned stats
     bin_means, bin_edges, _ = binned_statistic(nnd_orig, nnd_pred, statistic='mean', bins=bins)
     bin_stds, _, _ = binned_statistic(nnd_orig, nnd_pred, statistic='std', bins=bins)
     bin_centers = [(bin_edges[i] + bin_edges[i+1]) / 2 for i in range(len(bin_edges) - 1)]
 
     x_trans = custom_scale(bin_centers)
+    # Manually offset first bin (0cm–1cm) to midpoint value (e.g., 0.005 scaled)
+    x_trans[0] = custom_scale([0.005])[0]
+    x_trans[-1] = custom_scale([1.05])[0]
     y_trans = custom_scale(bin_means)
-    yerr_lower = custom_scale(bin_means - bin_stds)
-    yerr_upper = custom_scale(bin_means + bin_stds)
-    yerr = [y_trans - yerr_lower, yerr_upper - y_trans]
+    y_trans[0] = custom_scale([0.005])[0]    # middle of 0–1cm
+    y_trans[-1] = custom_scale([1.05])[0]    # middle of 1–1.1m
+    
+    # Compute bounds in linear space
+    lower_bounds = bin_means - bin_stds
+    upper_bounds = bin_means + bin_stds
 
-    plt.figure(figsize=(10, 6))
+    # Clip to avoid issues in log/scale
+    lower_bounds = np.clip(lower_bounds, a_min=1e-6, a_max=None)
+    upper_bounds = np.clip(upper_bounds, a_min=1e-6, a_max=None)
+
+    # Apply custom scaling
+    scaled_lower = custom_scale(lower_bounds)
+    scaled_upper = custom_scale(upper_bounds)
+
+    # Compute differences and ensure they’re non-negative
+    yerr_lower = np.maximum(y_trans - scaled_lower, 0)
+    yerr_upper = np.maximum(scaled_upper - y_trans, 0)
+    yerr = [yerr_lower, yerr_upper]
+
+
+    # Plot
+    plt.figure(figsize=(8, 8))
 
     if show_scatter:
         if tree_plots and color_by_plot:
@@ -299,21 +400,20 @@ def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None,
 
     plt.errorbar(x_trans, y_trans, yerr=yerr, fmt='o', color='red', label='Binned Mean')
 
-    x_diag = np.linspace(0.005, 2.0, 100)
+    # y = x reference line
+    x_diag = np.linspace(0.0, 1.1, 100)
     plt.plot(custom_scale(x_diag), custom_scale(x_diag), 'k--', label='y = x')
 
-    y_fit_vals = a * x_fit**b
-    plt.plot(custom_scale(x_fit), custom_scale(y_fit_vals), 'blue', label=r"$y = ax^b$" +
-             f"\n$a = {a:.3f} \pm {a_err:.3f}$\n$b = {b:.3f} \pm {b_err:.3f}$")
+    if show_fit:
+        y_fit_vals = a * x_fit**b
+        plt.plot(custom_scale(x_fit), custom_scale(y_fit_vals), 'blue',
+                 label=r"$y = ax^b$" + f"\n$a = {a:.3f} \pm {a_err:.3f}$\n$b = {b:.3f} \pm {b_err:.3f}$")
 
-    xtick_vals = [0.005, 0.01]
-    xtick_vals += [i / 100 for i in range(2, 11)]
-    xtick_vals += [i / 100 for i in range(20, 100, 10)]
-    xtick_vals.append(1.0)
-    m = 2
-    while m <= int(max_val) + 1:
-        xtick_vals.append(float(m))
-        m += 1
+    # Tick placement
+    xtick_vals = [0.000, 0.01]  # 0cm, 1cm
+    xtick_vals += [i / 100 for i in range(2, 10)]  # 2–9cm
+    xtick_vals += [i / 100 for i in range(10, 100, 10)]  # 10–90cm
+    xtick_vals += [1.0, 1.1]  # 1m and >1m
     xtick_labs = [custom_label(v) for v in xtick_vals]
     xtick_pos = custom_scale(np.array(xtick_vals))
 
@@ -321,13 +421,18 @@ def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None,
     plt.yticks(xtick_pos, xtick_labs)
     plt.xlabel('Original NN Distance (custom scaled)')
     plt.ylabel('Transformed NN Distance (custom scaled)')
-    plt.title('NN Distance Comparison with Custom Transformed Scale')
+    if model_type=="treelearn":
+        plt.title('NND Comparison TreeLearn')
+    if model_type=="pointtransformerv3":
+        plt.title('NND Comparison PointTransformer V3')
+    if model_type=="pointnet2":
+        plt.title('NND Comparison PointNet++')
 
-    division_vals = [0.1, 1.0]
-    for div in division_vals:
-        pos = custom_scale(np.array([div]))[0]
-        plt.axhline(pos, color='gray', linewidth=1.5)
-        plt.axvline(pos, color='gray', linewidth=1.5)
+    # Draw separator at 10cm with thinner lines
+    div = 0.1
+    pos = custom_scale(np.array([div]))[0]
+    plt.axhline(pos, color='gray', linewidth=1.0)
+    plt.axvline(pos, color='gray', linewidth=1.0)
 
     plt.grid(True, linestyle='--', linewidth=0.5)
     plt.legend()
@@ -337,92 +442,6 @@ def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None,
         plt.savefig(plot_savepath, dpi=300)
 
     plt.show()
-
-
-
-# def plot_nn_distances(nnd_orig, nnd_pred, tree_plots=None, plot_savepath=None):
-#     """
-#     Plots a double logarithmic scatter plot of the transformed nearest neighbour distances
-#     against the original ones. 
-    
-#     This function first fits a power law, then bins the original distances using bins 
-#     with edges at 1, 2, 3, ..., 9 times powers of ten (e.g. 1mm, 2mm, …, 9mm, 1cm, 2cm, …),
-#     and finally plots the binned means with error bars along with the fitted curve.
-#     """
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-#     from scipy.stats import binned_statistic
-
-#     print("Plotting...")
-
-#     # Convert to numpy arrays
-#     nnd_orig = np.array(nnd_orig)
-#     nnd_pred = np.array(nnd_pred)
-
-#     # Fit power law using the provided function
-#     x_fit, y_fit, a, b, a_err, b_err = fit_power_law(nnd_orig, nnd_pred)
-
-#     # Helper function to generate bins: 1,2,...,9 * 10^order for orders that cover the data range.
-#     def generate_log_bins(min_val, max_val):
-#         bins = []
-#         order_min = int(np.floor(np.log10(min_val)))
-#         order_max = int(np.ceil(np.log10(max_val)))
-#         for order in range(order_min, order_max + 1):
-#             for m in range(1, 10):
-#                 value = m * 10**order
-#                 if min_val <= value <= max_val:
-#                     bins.append(value)
-#         bins = np.array(sorted(bins))
-#         # Make sure the bins cover the full range:
-#         if bins[0] > min_val:
-#             bins = np.insert(bins, 0, min_val)
-#         if bins[-1] < max_val:
-#             bins = np.append(bins, max_val)
-#         return bins
-
-#     # Generate bins based on the range of original distances
-#     # bins = generate_log_bins(1e-4, np.max(nnd_orig))
-#     bins = generate_log_bins(1e-5, np.max(nnd_orig))
-
-#     # Compute binned statistics: means and standard deviations of transformed distances.
-#     bin_means, bin_edges, _ = binned_statistic(nnd_orig, nnd_pred, statistic='mean', bins=bins)
-#     bin_stds, _, _ = binned_statistic(nnd_orig, nnd_pred, statistic='std', bins=bins)
-#     # Use the geometric mean of the bin edges as the center for each bin.
-#     bin_centers = np.sqrt(bin_edges[:-1] * bin_edges[1:])
-
-#     # Add bisector line (black dashed) for reference: y = x.
-#     # x_bis = np.linspace(1e-4, np.max(nnd_orig), 100)
-#     x_bis = np.linspace(1e-5, np.max(nnd_orig), 100)
-
-#     # Create the plot
-#     plt.figure(figsize=(8, 6))
-#     plt.xscale('log')
-#     plt.yscale('log')
-#     if tree_plots:
-#         # Instead of one scatter call, plot points from each plot separately.
-#         # Define colors for each plot.
-#         colors = {3: 'red', 4: 'green', 6: 'blue', 8: 'yellow'}
-#         unique_plots = sorted(set(tree_plots))
-#         for p in unique_plots:
-#             # Get the indices for points from this plot.
-#             indices = [i for i, plot in enumerate(tree_plots) if plot == p]
-#             plt.scatter(nnd_orig[indices], nnd_pred[indices],
-#                         color=colors[p], label=f'Plot {p}', alpha=0.1, s=5)
-#     else:
-#         plt.scatter(nnd_orig, nnd_pred, alpha=0.3, label='Data', s=5)
-#     plt.errorbar(bin_centers, bin_means, yerr=bin_stds, fmt='o', color='red', label='Binned Mean')
-#     plt.plot(x_fit, y_fit, color='blue', label=r"$y = ax^b$" + 
-#                    f"\n$a = {a:.3f} \pm {a_err:.3f}$" + 
-#                    f"\n$b = {b:.3f} \pm {b_err:.3f}$")
-#     plt.plot(x_bis, x_bis, 'k--')
-#     plt.xlabel('Original NN Distance')
-#     plt.ylabel('Transformed NN Distance')
-#     plt.title('Double Logarithmic NN Distance Comparison')
-#     plt.legend()
-#     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-#     if plot_savepath:
-#         plt.savefig( plot_savepath, dpi=300 )
-#     plt.show()
 
 
 def plot_nn_distances_subplots(nnd_orig, nnd_pred, tree_plots, plot_savepath=None):
