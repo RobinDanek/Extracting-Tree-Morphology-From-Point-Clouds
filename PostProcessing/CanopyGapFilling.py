@@ -84,6 +84,10 @@ class Sphere:
             labels = cluster_labels_agglomerative(
                 candidate_coords, eps=eps, min_cluster_size=min_samples, linkage=linkage
             )
+        if algorithm == 'euclidian':
+            labels = cluster_labels_euclidian(
+                candidate_coords, eps=eps, min_cluster_size=min_samples
+            )
         elif algorithm == 'dbscan':
             labels = DBSCAN(eps=eps, min_samples=min_samples).fit(candidate_coords).labels_
 
@@ -118,7 +122,7 @@ class Sphere:
 
             # Filter out candidate centers that are too far from this sphere's center.
             distance = np.linalg.norm(center_3d - self.center)
-            if distance > self.radius*1.5:
+            if distance > self.radius*1.2:
                 continue
 
             # Append center and radius (spread)
@@ -132,7 +136,7 @@ class Sphere:
         return candidate_info
     
 
-def export_clusters_spheres_ply(clusters, filename="spheres_mesh.ply", resolution=20, color_by_outer=False):
+def export_clusters_spheres_ply(clusters, filename="spheres_mesh.ply", resolution=2, color_by_outer=False):
     """
     Exports all spheres from a list of SphereCluster objects as a single combined PLY mesh.
     Each sphere is rendered using Open3D's create_sphere and then translated to its center.
@@ -364,7 +368,7 @@ class CylinderTracker:
     def export_to_dataframe(self):
         return pd.DataFrame([cyl.to_dict() for cyl in self.cylinders.values()])
 
-    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=20, color_by_type=False):
+    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=2, color_by_type=False):
         if not self.cylinders:
             print("No cylinders to export.")
             return
@@ -596,6 +600,34 @@ def cluster_labels_agglomerative(points, eps=0.2, min_cluster_size=5, linkage='a
 
     return labels_out
 
+def cluster_labels_euclidian(points, eps=0.03, min_cluster_size=5):
+    tree = cKDTree(points)
+    labels = -np.ones(points.shape[0], dtype=int)
+    cluster_id = 0
+
+    for idx in range(points.shape[0]):
+        if labels[idx] != -1:
+            continue
+
+        indices = tree.query_ball_point(points[idx], eps)
+        if len(indices) < min_cluster_size:
+            continue
+
+        seed_queue = set(indices)
+        labels[list(seed_queue)] = cluster_id
+
+        while seed_queue:
+            current_point = seed_queue.pop()
+            neighbors = tree.query_ball_point(points[current_point], eps)
+
+            for neighbor in neighbors:
+                if labels[neighbor] == -1:
+                    labels[neighbor] = cluster_id
+                    seed_queue.add(neighbor)
+
+        cluster_id += 1
+
+    return labels
 
 def reset_reassigned_flags_for_cluster(cluster, cylinder_tracker: CylinderTracker):
     """
@@ -793,6 +825,7 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
                 for center, spread in zip(grouped_centers, grouped_spreads):
                     radius = max(spread * params['sphere_factor'], params['radius_min'])
                     radius = min(radius, params['radius_max'])
+                    # radius = min(spread * params['sphere_factor'], params['radius_max'])
                     temp = Sphere(center, radius=radius, thickness=params["sphere_thickness"], spread=spread)
                     temp.assign_points(points, unsegmented_points)
                     if len(temp.contained_points) > params['min_points_threshold']:
@@ -809,39 +842,61 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
                     merged_sphere = temp_spheres[0]
                     capped_spread = np.clip(merged_sphere.spread, lower_bound, upper_bound)
                     merged_sphere.radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
+                    merged_sphere.radius = min(merged_sphere.radius, params['radius_max'])
                     merged_sphere.spread = capped_spread
-                else:
-                    sub_centers = np.array([s.center for s in temp_spheres])
-                    sub_spreads = np.array([s.spread for s in temp_spheres])
-                    merged_center = np.average(sub_centers, axis=0, weights=weights)
-                    merged_spread = np.average(sub_spreads, weights=weights)
-
-                     # === Compute pairwise distances ===
-                    diffs = sub_centers[:, np.newaxis, :] - sub_centers[np.newaxis, :, :]  # shape (n, n, 3)
-                    pairwise_dists = np.linalg.norm(diffs, axis=2)  # shape (n, n)
-
-                    # Upper triangle indices (excluding diagonal)
-                    n = len(sub_centers)
-                    i_indices, j_indices = np.triu_indices(n, k=1)
-
-                    flat_dists = pairwise_dists[i_indices, j_indices]
-
-                    # Compute pairwise weights as sum of weights of the two spheres
-                    pair_weights = weights[i_indices] + weights[j_indices]
-
-                    # Avoid division by zero
-                    if pair_weights.sum() > 0:
-                        weighted_avg_dist = np.average(flat_dists, weights=pair_weights)
-                    else:
-                        weighted_avg_dist = 0.0
-
-                    capped_spread = np.clip(merged_spread, lower_bound, upper_bound)
-                    adjusted_radius = max(capped_spread * params['sphere_factor'] + 0.5 * weighted_avg_dist, params['radius_min'])
-                    merged_sphere = Sphere(merged_center, radius=adjusted_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"]) # TODO
                     merged_sphere.assign_points(points, unsegmented_points)
 
+                else:
+                    if params['merging_procedure'] == 'weighted':
+                        # Case of weighted radius plus distance
+                        sub_centers = np.array([s.center for s in temp_spheres])
+                        sub_spreads = np.array([s.spread for s in temp_spheres])
+                        merged_center = np.average(sub_centers, axis=0, weights=weights)
+                        merged_spread = np.average(sub_spreads, weights=weights)
+
+                        # === Compute pairwise distances ===
+                        diffs = sub_centers[:, np.newaxis, :] - sub_centers[np.newaxis, :, :]  # shape (n, n, 3)
+                        pairwise_dists = np.linalg.norm(diffs, axis=2)  # shape (n, n)
+
+                        # Upper triangle indices (excluding diagonal)
+                        n = len(sub_centers)
+                        i_indices, j_indices = np.triu_indices(n, k=1)
+
+                        flat_dists = pairwise_dists[i_indices, j_indices]
+
+                        # Compute pairwise weights as sum of weights of the two spheres
+                        pair_weights = weights[i_indices] + weights[j_indices]
+
+                        # Avoid division by zero
+                        if pair_weights.sum() > 0:
+                            weighted_avg_dist = np.average(flat_dists, weights=pair_weights)
+                        else:
+                            weighted_avg_dist = 0.0
+
+                        capped_spread = np.clip(merged_spread, lower_bound, upper_bound)
+                        adjusted_radius = max(capped_spread * params['sphere_factor'] + 0.5 * weighted_avg_dist, params['radius_min'])
+                        adjusted_radius = min(adjusted_radius, params['radius_max'])
+                        merged_sphere = Sphere(merged_center, radius=adjusted_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
+
+                    elif params['merging_procedure'] == 'enclosed':
+                        # Center is weighted average as well, but the sphere is constructed to be so large that all other spheres are enclosed
+                        sub_centers = np.array([s.center for s in temp_spheres])
+                        sub_spreads = np.array([s.spread for s in temp_spheres])
+                        merged_center = np.average(sub_centers, axis=0, weights=weights)
+                        merged_spread = np.average(sub_spreads, weights=weights)
+
+                        distances = [np.linalg.norm(merged_center - s.center) + s.radius for s in temp_spheres]
+                        adjusted_radius = max(distances)
+
+                        merged_sphere = Sphere(merged_center, radius=adjusted_radius,
+                                                thickness=params["sphere_thickness"],
+                                                spread=merged_spread, 
+                                                thickness_type=params["sphere_thickness_type"])
+                    else:
+                        raise ValueError("Unknown merging_procedure specified in params.")
+
+                merged_sphere.assign_points(points, unsegmented_points)
                 if len(merged_sphere.contained_points) > params['min_points_threshold']:
-                    new_spheres.append(merged_sphere)
                     new_spheres.append(merged_sphere)
                     segmentation_ids[merged_sphere.contained_points] = cluster_id
                     unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
@@ -1118,8 +1173,8 @@ def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth):
 
 def main():
     print("Step 1: Loading the cloud")
+    # file_path = "data/postprocessed/TreeLearn/32_17_pred_denoised_supsamp_k10.txt"
     file_path = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp.txt"
-    # file_path = "data/predicted/PointTransformerV3/raw/32_17_pred_denoised.txt"
     points = load_pointcloud(file_path)
 
     print("Step 2: Init params and arrays")
@@ -1131,6 +1186,30 @@ def main():
     cluster_id = 0
     cylinder_tracker = CylinderTracker()
 
+    # params = {
+    # 'eps': 0.05,
+    # 'min_samples': 2,
+    # 'sphere_factor': 2.0,
+    # 'radius_min': 0.10,
+    # 'radius_max': 0.4,
+    # 'min_growth_points': 10,
+    # 'min_points_threshold': 4,
+    # 'max_spread_growth': 1.2,
+    # 'min_spread_growth': 0.2,
+    # 'smallest_search_radius': 0.1,
+    # 'search_radius_step': 0.1,
+    # 'max_search_radius': 0.3,
+    # 'max_dist': 0.4,
+    # 'max_angle': 60,
+    # 'distance_type': 'center',
+    # 'sphere_radius': 0.15,
+    # 'sphere_thickness': 0.33,
+    # 'sphere_thickness_type': 'relative',
+    # 'clustering_algorithm': 'euclidian',
+    # 'merging_procedure': 'weighted',
+    # 'clustering_linkage': 'single'
+    # }
+
     params = {
         'eps': 0.05,
         'min_samples': 2,
@@ -1140,7 +1219,7 @@ def main():
         'min_growth_points': 10,
         'min_points_threshold': 4,
         'max_spread_growth': 1.2,
-        'min_spread_growth': 0.0,
+        'min_spread_growth': 0.33,
         'smallest_search_radius': 0.1,
         'search_radius_step': 0.1,
         'max_search_radius': 0.3,
@@ -1150,7 +1229,8 @@ def main():
         'sphere_radius': 0.15,
         'sphere_thickness': 0.33,
         'sphere_thickness_type': 'relative',
-        'clustering_algorithm': 'agglomerative',
+        'clustering_algorithm': 'euclidian',
+        'merging_procedure': 'weighted',
         'clustering_linkage': 'single'
     }
 
@@ -1235,13 +1315,24 @@ def main():
     # Export cylinder mesh
     cylinders_ply_path = "data/postprocessed/PointTransformerV3/cylinders_mesh.ply"
     # Color cylinders by type (red for connection, green for follow)
-    cylinder_tracker.export_mesh_ply(cylinders_ply_path, resolution=60, color_by_type=True)
+    cylinder_tracker.export_mesh_ply(cylinders_ply_path, resolution=10, color_by_type=True)
     print(f"✅ Cylinders saved to: {cylinders_ply_path}")
 
     spheres_ply_path = "data/postprocessed/PointTransformerV3/spheres_mesh.ply"
     # Color spheres by outer vs. non-outer (blue for outer, gray for non-outer)
-    export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=20, color_by_outer=True)
+    export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=10, color_by_outer=True)
     print(f"✅ Spheres saved to: {spheres_ply_path}")
 
 if __name__ == "__main__":
-    main()
+    import cProfile, pstats
+
+    profiler = cProfile.Profile()
+    profiler.enable()  # Start profiling
+
+    main()  # Run your main code
+
+    profiler.disable()  # Stop profiling
+
+    # Create a Stats object, sort by cumulative time, and print the top 10 entries
+    stats = pstats.Stats(profiler).sort_stats("cumulative")
+    stats.print_stats(10)
