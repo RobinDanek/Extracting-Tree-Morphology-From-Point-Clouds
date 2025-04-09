@@ -53,7 +53,7 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
                 tree = cKDTree(points_for_query)
                 for idx in order:
                     point = original_points[idx]
-                    distances, neighbor_indices = tree.query(point, k=k*(i+1))
+                    distances, neighbor_indices = tree.query(point, k=k*2**(i))
                     if len(neighbor_indices) > 1:
                         # Exclude the self-match (first neighbor) and choose one neighbor randomly.
                         chosen_idx = np.random.choice(neighbor_indices[1:])
@@ -95,7 +95,7 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
             upsampled_data = data
 
         # Save output
-        output_path = os.path.join(outputDir, os.path.basename(cloud).replace(".txt", "_supsamp.txt"))
+        output_path = os.path.join(outputDir, os.path.basename(cloud).replace(".txt", f"_supsamp_k{k}.txt"))
         np.savetxt(output_path, upsampled_data, fmt="%.6f")
 
     return
@@ -104,10 +104,12 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
 
 if __name__ == "__main__":
 
-    cloudList = ["data/predicted/PointTransformerV3/raw/32_17_pred_denoised.txt"]
-    outputDir = os.path.join('data', 'postprocessed', 'PointTransformerV3')
+    # cloudList = ["data/predicted/PointTransformerV3/raw/32_17_pred_denoised.txt"]
+    # outputDir = os.path.join('data', 'postprocessed', 'PointTransformerV3')
+    cloudList = ["data/predicted/TreeLearn/raw/32_17_pred_denoised.txt"]
+    outputDir = os.path.join('data', 'postprocessed', 'TreeLearn')
     os.makedirs( outputDir, exist_ok=True )
 
     args = parse_args()
 
-    superSample(cloudList, outputDir, min_height=20, use_only_original=True)
+    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10)
