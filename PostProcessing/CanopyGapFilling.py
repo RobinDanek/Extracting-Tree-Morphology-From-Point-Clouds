@@ -1,11 +1,15 @@
 import numpy as np
 import pandas as pd
 import open3d as o3d
+import pyransac3d as pyrsc
 from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from collections import defaultdict, Counter
 from tqdm import tqdm
 from scipy.spatial import cKDTree
+from Modules.Projection import closest_cylinder_cuda_batch
+from Modules.Utils import get_device
 import random
+import torch
 
 # TODO: 
 # - Mark spheres as outer if they make a certain turn during spherre following
@@ -40,25 +44,50 @@ class Sphere:
         else:
             raise ValueError("Invalid thickness type. Must be 'relative' or 'absolute'.")
 
-    def assign_points(self, points, indices):
-        """
-        Vectorized assignment of points to contained and outer regions.
-        """
-        # Get the subset of points based on provided indices
-        subset_points = points[indices]
+    def assign_points(self, points, indices, device, point_tree):
+        # Ensure that points is a torch tensor on the desired device.
+        # (If using NumPy arrays, convert them first.)
+        # if not isinstance(points, torch.Tensor):
+        #     points = torch.tensor(points, device=device, dtype=torch.float32)
+        
+        # # Optionally, if self.center is stored as a NumPy array, convert it too.
+        # if not isinstance(self.center, torch.Tensor):
+        #     self.center = torch.tensor(self.center, device=device, dtype=torch.float32)
+        
+        # # Assume indices is a tensor or a NumPy array of indices.
+        # if not isinstance(indices, torch.Tensor):
+        #     indices = torch.tensor(indices, device=device, dtype=torch.long)
 
-        # Compute distances of all subset points to the sphere center
+        # Get points within the sphere
+        local_indices = np.array(point_tree.query_ball_point( self.center, self.radius + 0.05 ))
+
+        if len(local_indices) == 0:
+            self.contained_points = np.array([])
+            self.outer_points = np.array([])
+
+            return
+
+        # Pick the correct subset (Near sphere and unsegmented)
+        mask = np.zeros(points.shape[0], dtype=bool)
+        mask[indices] = True
+        subset_indices = local_indices[mask[local_indices]]
+        
+        # Get the subset of points for the provided indices
+        subset_points = points[subset_indices]
+        
+        # Compute distances from each point to the sphere center
+        # dists = torch.norm(subset_points - self.center, dim=1)
         dists = np.linalg.norm(subset_points - self.center, axis=1)
-
-        # Boolean masks for contained and outer points
+        
+        # Create boolean masks using PyTorch operations.
         contained_mask = dists <= self.radius
-        outer_mask = (self.radius - self.thickness < dists) & contained_mask
+        outer_mask = ((dists > (self.radius - self.thickness)) & contained_mask)
+        
+        # Save the indices back (you might want to convert to CPU or numpy if further processing expects that)
+        self.contained_points = subset_indices[contained_mask]
+        self.outer_points = subset_indices[outer_mask]
 
-        # Get indices of contained and outer points (vectorized)
-        self.contained_points = indices[contained_mask]
-        self.outer_points = indices[outer_mask]
-
-    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5, algorithm='agglomerative', linkage='average'):
+    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5, algorithm='agglomerative', linkage='average', clustering_type='angular'):
         """
         Cluster the outer points using DBSCAN or Agglomerative Clustering to detect candidate centers.
 
@@ -76,20 +105,57 @@ class Sphere:
         
         candidate_coords = points[self.outer_points]
 
-        if candidate_coords.shape[0] < 2:
-            self.is_outer = True
-            return []
-        
-        if algorithm == 'agglomerative':
-            labels = cluster_labels_agglomerative(
-                candidate_coords, eps=eps, min_cluster_size=min_samples, linkage=linkage
-            )
-        if algorithm == 'euclidian':
-            labels = cluster_labels_euclidian(
-                candidate_coords, eps=eps, min_cluster_size=min_samples
-            )
-        elif algorithm == 'dbscan':
-            labels = DBSCAN(eps=eps, min_samples=min_samples).fit(candidate_coords).labels_
+        if clustering_type=='euclidian':
+
+            if candidate_coords.shape[0] < 2:
+                self.is_outer = True
+                return []
+            
+            if algorithm == 'agglomerative':
+                labels = cluster_labels_agglomerative(
+                    candidate_coords, eps=eps, min_cluster_size=min_samples, linkage=linkage
+                )
+            if algorithm == 'euclidian':
+                labels = cluster_labels_euclidian(
+                    candidate_coords, eps=eps, min_cluster_size=min_samples
+                )
+            elif algorithm == 'dbscan':
+                labels = DBSCAN(eps=eps, min_samples=min_samples).fit(candidate_coords).labels_
+
+        elif clustering_type=='angular':
+            def angular_distance(u1, u2):
+                """Calculates the angle (in radians) between two unit vectors."""
+                dot_product = np.dot(u1, u2)
+                # Clip dot product to [-1.0, 1.0] for numerical stability
+                dot_product = np.clip(dot_product, -1.0, 1.0)
+                return np.arccos(dot_product) # Returns angle in radians [0, pi]
+            
+            vectors = candidate_coords - self.center # Shape (N, 3)
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+
+            # Avoid division by zero for points exactly at the center (shouldn't happen for outer points)
+            norms[norms < 1e-9] = 1e-9
+
+            unit_vectors = vectors / norms # Shape (N, 3)
+
+            # --- Start: Vectorized Pairwise Angular Distance ---
+            # 1. Compute pairwise dot products using matrix multiplication
+            #    U @ U.T gives an NxN matrix where entry (i, j) is dot(U[i], U[j])
+            dot_products = unit_vectors @ unit_vectors.T
+
+            # 2. Clip for numerical stability (dot products should be [-1, 1])
+            dot_products = np.clip(dot_products, -1.0, 1.0)
+
+            # 3. Compute pairwise angular distances (in radians)
+            #    This is the NxN distance matrix DBSCAN needs
+            pairwise_angular_distances = np.arccos(dot_products)
+            # --- End: Vectorized Pairwise Angular Distance ---
+
+            # Use DBSCAN with the angular metric
+            # Note: metric='precomputed' is NOT used here. We provide the callable.
+            # DBSCAN will compute the pairwise distance matrix using our function.
+            db = DBSCAN(eps=eps, min_samples=min_samples, metric='precomputed')
+            labels = db.fit_predict(pairwise_angular_distances)
 
         valid_labels = set(labels) - {-1}
         if not valid_labels:
@@ -97,6 +163,11 @@ class Sphere:
             return []
         
         candidate_info = []  # List to store (centroid, spread) tuples.
+
+        # These might need tuning and could be added to your main `params` dictionary
+        # ransac_threshold = 0.05 # Max distance point to cylinder (e.g., 2cm)
+        # ransac_iterations = 100 # Number of RANSAC iterations
+        # ransac_min_points = 5 # Min points needed for pyransac3d fit
         
         for label in valid_labels:
             # Get all points in the current cluster.
@@ -104,21 +175,54 @@ class Sphere:
             
             # Compute the centroid of the cluster in 3D.
             centroid_3d = np.mean(cluster_coords, axis=0)
+
+            # Compute the vector from the sphere center (self.center) to the centroid
+            v = centroid_3d - self.center
+            n = v / np.linalg.norm(v)  # Normal of the plane
+
+            # Choose an arbitrary vector that is not parallel to n.
+            arbitrary = np.array([0, 0, 1])
+            if np.abs(np.dot(n, arbitrary)) > 0.99:
+                arbitrary = np.array([0, 1, 0])
+                
+            # Create two orthonormal basis vectors for the plane:
+            basis1 = arbitrary - np.dot(arbitrary, n) * n
+            basis1 = basis1 / np.linalg.norm(basis1)
+            basis2 = np.cross(n, basis1)
+
+            # Compute offsets of all points from the cluster centroid
+            offsets = cluster_coords - centroid_3d  # Shape (N, 3)
+
+            # Compute the dot product of each offset with the plane normal (produces an (N,) array)
+            proj_comp = offsets @ n  # Equivalent to np.dot(offsets, n)
+
+            # Remove the component in the normal direction to get the projection vector for every point
+            proj_vec = offsets - np.outer(proj_comp, n)  # Shape (N, 3)
+
+            # Compute 2D coordinates by projecting onto basis1 and basis2
+            x_coords = proj_vec @ basis1  # Shape (N,)
+            y_coords = proj_vec @ basis2  # Shape (N,)
+
+            # Stack the 1D coordinate arrays column-wise to form an (N, 2) array for 2D points
+            projected = np.column_stack((x_coords, y_coords))
             
-            # Fit a best-fit plane using PCA (SVD) on the cluster coordinates.
-            centered_coords = cluster_coords - centroid_3d
-            U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
-            # The first two principal components span the best-fit plane.
-            plane_basis = Vt[:2].T  # shape (3,2)
+            # # Fit a best-fit plane using PCA (SVD) on the cluster coordinates.
+            # centered_coords = cluster_coords - centroid_3d
+            # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
+            # # The first two principal components span the best-fit plane.
+            # plane_basis = Vt[:2].T  # shape (3,2)
             
-            # Project the cluster points onto the plane.
-            projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
+            # # Project the cluster points onto the plane.
+            # projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
 
             # New: Fit circle in 2D
             center_2d, radius = fit_circle_2d(projected)
 
-            # Convert 2D circle center back to 3D
-            center_3d = centroid_3d + plane_basis @ center_2d
+            # # Convert 2D circle center back to 3D
+            # center_3d = centroid_3d + plane_basis @ center_2d
+
+            # Convert the 2D circle center back to 3D
+            center_3d = centroid_3d + center_2d[0]*basis1 + center_2d[1]*basis2
 
             # Filter out candidate centers that are too far from this sphere's center.
             distance = np.linalg.norm(center_3d - self.center)
@@ -196,9 +300,9 @@ def export_clusters_spheres_ply(clusters, filename="spheres_mesh.ply", resolutio
 
 # A cluster to hold the collection of spheres and associated segmentation information.
 class SphereCluster:
-    def __init__(self, cluster_id):
+    def __init__(self):
         self.spheres = []  # list of Sphere objects in the cluster
-        self.id = cluster_id
+        #self.id = cluster_id
 
     def get_id(self):
         return self.id
@@ -285,6 +389,7 @@ class CylinderTracker:
     def __init__(self):
         self.cylinders = {}
         self.next_id = 0
+        self.recent_cylinders = []  # List to store newly added cylinders (in the current iteration).
 
     def add_cylinder(self, sphere_a, sphere_b, radius, parent_id=None, cyl_type="follow"):
         """
@@ -333,6 +438,9 @@ class CylinderTracker:
         sphere_b.connection_vectors.append(sphere_a.center - sphere_b.center)
 
         self.cylinders[cylinder_id] = cylinder
+
+        # Append the new cylinder to the recent_cylinders list
+        self.recent_cylinders.append(cylinder)
 
     def reassign_parent(self, new_parent_id, child_start_sphere):
         """
@@ -419,6 +527,9 @@ class CylinderTracker:
 
     def _create_cylinder_between(self, p0, p1, radius, resolution):
         height = np.linalg.norm(p1 - p0)
+        if height <= 1e-6:
+            # Set height to a small epsilon (e.g., 1e-4)
+            height = 1e-4
         mesh = o3d.geometry.TriangleMesh.create_cylinder(radius=radius, height=height, resolution=resolution)
         mesh.compute_vertex_normals()
 
@@ -516,12 +627,42 @@ def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1, sphe
     # Center the points for PCA
     centered_coords = base_points - center
 
-    # PCA to find best-fit plane
-    U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
-    plane_basis = Vt[:2].T  # First 2 principal components
+    # # PCA to find best-fit plane
+    # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
+    # plane_basis = Vt[:2].T  # First 2 principal components
 
-    # Project to 2D plane
-    projected = centered_coords.dot(plane_basis)
+    # # Project to 2D plane
+    # projected = centered_coords.dot(plane_basis)
+
+    v = np.array([0,0,1])
+    n = v / np.linalg.norm(v)  # Normal of the plane
+
+    # Choose an arbitrary vector that is not parallel to n.
+    arbitrary = np.array([1, 0, 0])
+    if np.abs(np.dot(n, arbitrary)) > 0.99:
+        arbitrary = np.array([0, 1, 0])
+        
+    # Create two orthonormal basis vectors for the plane:
+    basis1 = arbitrary - np.dot(arbitrary, n) * n
+    basis1 = basis1 / np.linalg.norm(basis1)
+    basis2 = np.cross(n, basis1)
+
+    # Compute offsets of all points from the cluster centroid
+    offsets = centered_coords - center  # Shape (N, 3)
+
+    # Compute the dot product of each offset with the plane normal (produces an (N,) array)
+    proj_comp = offsets @ n  # Equivalent to np.dot(offsets, n)
+
+    # Remove the component in the normal direction to get the projection vector for every point
+    proj_vec = offsets - np.outer(proj_comp, n)  # Shape (N, 3)
+
+    # Compute 2D coordinates by projecting onto basis1 and basis2
+    x_coords = proj_vec @ basis1  # Shape (N,)
+    y_coords = proj_vec @ basis2  # Shape (N,)
+
+    # Stack the 1D coordinate arrays column-wise to form an (N, 2) array for 2D points
+    projected = np.column_stack((x_coords, y_coords))
+    
     centroid_2d = np.mean(projected, axis=0)
     dists = np.linalg.norm(projected - centroid_2d, axis=1)
 
@@ -530,10 +671,12 @@ def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1, sphe
     spread = max(spread, 0.05)
     radius = max(spread * 2, 0.1)
 
+    print(f"First sphere with {radius:.3f} radius and {spread:.3f} spread. Num points {len(base_points)}")
+
     return Sphere(center, radius=radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
 
 
-def find_seed_sphere(points, unsegmented_points, sphere_radius, sphere_thickness, sphere_thickness_type='relative'):
+def find_seed_sphere(points, unsegmented_points, sphere_radius, sphere_thickness, sphere_thickness_type='relative', device=None, point_tree=None):
     """
     Randomly pick one unsegmented point and create a seed sphere centered on it.
     """
@@ -541,7 +684,7 @@ def find_seed_sphere(points, unsegmented_points, sphere_radius, sphere_thickness
     seed_point = points[seed_idx]
     
     temp_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True)
-    temp_sphere.assign_points(points, unsegmented_points)
+    temp_sphere.assign_points(points, unsegmented_points, device=device, point_tree=point_tree)
     spread = compute_spread_of_points(points[temp_sphere.contained_points])
 
     return Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
@@ -709,13 +852,17 @@ def find_best_merge_connection(outer_spheres_main, outer_spheres_branch, cylinde
         main_center = centers_main[i_main]
         # Connection vector from branch to main.
         connection_vector = main_center - branch_center
+        # Skip close pairs
         norm_conn = np.linalg.norm(connection_vector)
         if norm_conn < 1e-9:
+            continue
+        # Skip pairs where both spheres don't have any connections
+        if len(outer_spheres_main[i_main].connection_vectors) == 0 and len(outer_spheres_branch[i_main].connection_vectors) == 0:
             continue
         connection_unit = connection_vector / norm_conn
         
         # Get branch sphere's average connection vector.
-        branch_avg = avg_vectors[i_branch]
+        branch_avg = -avg_vectors[i_branch] # Reverse this vector, because it points into the branch cluster while the connection vector points away from it
         norm_branch_avg = np.linalg.norm(branch_avg)
         if norm_branch_avg < 1e-9:
             # Fallback: use main sphere's average if branch sphere has no connection vectors.
@@ -743,8 +890,93 @@ def find_best_merge_connection(outer_spheres_main, outer_spheres_branch, cylinde
     best_candidate = min(valid_candidates, key=lambda x: x[2])
     return best_candidate
 
+def cylinder_proximity_based_segmentation(points, unsegmented_points, query_sphere: Sphere, cylinders, point_tree, eps, device, batch_size=1024):
+    """
+    Process only the unsegmented points to assign them to their closest fitted cylinders.
+    
+    For each unsegmented point (selected by indices in 'unsegmented_points'), the function
+    computes the offset vector and distance to its closest cylinder (using closest_cylinder_cuda_batch),
+    and then marks the point as segmented if its distance is less than eps.
+    
+    Parameters:
+      - points: NumPy array of shape (N, 3) with 3D coordinates of all points.
+      - cylinders: List of Cylinder objects. Each Cylinder must have attributes:
+                   .start (3-array), .end (3-array), .radius (scalar), and .id.
+      - eps: Scalar distance threshold. Points with distance < eps are marked segmented.
+      - device: CUDA device (e.g. torch.device("cuda:0")).
+      - unsegmented_points: NumPy array of indices (of the points array) that have not yet been segmented.
+      - batch_size: Number of points processed per batch.
+      
+    Returns:
+      - output_data: NumPy array of shape (n, 8) for the processed unsegmented points, with columns:
+                     [x, y, z, offset_x, offset_y, offset_z, cylinder_ID, segmented_flag]
+      - new_unsegmented_points: NumPy array of indices that remain unsegmented after this operation.
+    """
 
-def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params):
+    # Extract cylinder parameters from the list of Cylinder objects:
+    # Each Cylinder object is assumed to have attributes: start, end, radius, id.
+    start_arr = np.array([c.start for c in cylinders])  # shape (M, 3)
+    end_arr = np.array([c.end for c in cylinders])        # shape (M, 3)
+    radius_arr = np.array([c.radius for c in cylinders])  # shape (M,)
+    ids_arr = np.array([c.id for c in cylinders])         # shape (M,)
+
+    # Convert cylinder data to torch tensors on GPU:
+    start_t = torch.tensor(start_arr, dtype=torch.float32, device=device)
+    end_t = torch.tensor(end_arr, dtype=torch.float32, device=device)
+    radius_t = torch.tensor(radius_arr, dtype=torch.float32, device=device)
+    IDs_t = torch.tensor(ids_arr, dtype=torch.int32, device=device)
+
+    # Compute cylinder axis and lengths:
+    axis = end_t - start_t  # Shape: (M, 3)
+    axis_length = torch.norm(axis, dim=1, keepdim=True)  # Shape: (M, 1)
+    axis_unit = axis / axis_length                    # Shape: (M, 3)
+
+    # create valid subset of points
+    # Get points within the sphere
+    local_indices = np.array(point_tree.query_ball_point( query_sphere.center, query_sphere.radius * 3 ))
+
+    # Pick the correct subset (Near sphere and unsegmented)
+    mask = np.zeros(points.shape[0], dtype=bool)
+    mask[unsegmented_points] = True
+    subset_indices = local_indices[mask[local_indices]]
+    
+    # Get the subset of points for the provided indices
+    subset_points = points[subset_indices]
+
+    # Number of unsegmented points to process:
+    num_pts = len(subset_points)
+
+    # Save indices that are close to the cylinders
+    segmented_indices = []
+
+    # Process unsegmented points in batches.
+    for j in range(0, num_pts, batch_size):
+
+        # Global indices for these points:
+        batch_global_inds = subset_indices[j:j+batch_size]
+        # Extract batch (using these global indices)
+        batch_points = points[batch_global_inds, :3]
+
+        # Compute closest cylinder info for this batch using your CUDA function.
+        ids_batch, distances_batch, offsets_batch = closest_cylinder_cuda_batch(
+            batch_points, start_t, radius_t, axis_length, axis_unit, IDs_t, device, move_points_to_mantle=True
+        )
+        # ids_batch, distances_batch, and offsets_batch are NumPy arrays (assumed shape: (n_batch, ))
+        # where offsets_batch is (n_batch, 3)
+
+        # Determine segmentation for this batch: mark points if distance < eps.
+        seg_mask = distances_batch < eps
+
+        # Discard points that were segmented
+        segmented_indices.extend(batch_global_inds[seg_mask])
+
+    # Now remove the segmented indices from the original unsegmented_points:
+    segmented_indices = np.array(segmented_indices, dtype=np.int32)
+    new_unsegmented_points = np.setdiff1d(unsegmented_points, segmented_indices)
+    return new_unsegmented_points
+
+
+def cluster_points(points, sphere_id, initial_sphere: Sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, point_tree):
     """
     Perform the sphere-following clustering on a given cluster, merging close candidate spheres.
 
@@ -758,16 +990,23 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
         max_spread_growth: Limit on how much larger a child's spread can be compared to its parent.
     """
 
-    cluster = SphereCluster(cluster_id=cluster_id)
+    cluster = SphereCluster()
     cluster.add_sphere(initial_sphere)
 
     unsegmented_points = np.array(unsegmented_points, dtype=int)
 
-    initial_sphere.assign_points(points, unsegmented_points)
-    segmentation_ids[initial_sphere.contained_points] = cluster_id
-    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+    initial_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+    segmentation_ids[initial_sphere.contained_points] = sphere_id
+    initial_sphere_id = sphere_id
+    if params['segmentation_type'] == 'sphere':
+        unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
 
     old_spheres = [initial_sphere]
+
+    # Extra measure for cases where no new spheres are created from the initial sphere. In these cases no cylinder is created
+    # and thus no segmentation is triggered in the cylindrical segmentation case. If the init does not create any new spheres, 
+    # spherical segmentation is triggered
+    grown_init = False 
 
     while True:
         new_spheres = []
@@ -791,124 +1030,201 @@ def cluster_points(points, cluster_id, initial_sphere: Sphere, segmentation_ids,
                 center, spread = candidate_info[0]
                 capped_spread = np.clip(spread, lower_bound, upper_bound)
 
-                new_radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
+                new_radius = capped_spread
+                new_radius = max(new_radius * params['sphere_factor'], params['radius_min'])
                 new_radius = min(new_radius, params['radius_max'])
                 new_sphere = Sphere(center, radius=new_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
-                new_sphere.assign_points(points, unsegmented_points)
+                new_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
-                # if len(new_sphere.contained_points) >params ['min_points_threshold']:
+                if len(new_sphere.contained_points) > params ['min_points_threshold']:
                 #     new_spheres.append(new_sphere)
-                new_spheres.append(new_sphere)
-                segmentation_ids[new_sphere.contained_points] = cluster_id
-                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-                cluster.add_sphere(new_sphere)
-                cylinder_tracker.add_cylinder( sphere, new_sphere, capped_spread )
+                    new_spheres.append(new_sphere)
+                    segmentation_ids[new_sphere.contained_points] = sphere_id
+                    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+                    cluster.add_sphere(new_sphere)
+                    cylinder_tracker.add_cylinder( sphere, new_sphere, capped_spread )
 
 
                 continue  # skip to next queried sphere
 
-            # === Merge close candidates using DBSCAN ===
-            centers = np.array([c for c, _ in candidate_info])
-            spreads = np.array([min(s, parent_spread * params['max_spread_growth']) for _, s in candidate_info]) # Already cap the spreads
+            elif len(candidate_info) > 1:
+                # Subcase: No merging requested
+                if params['merging_procedure'] == 'none':
+                    for center, spread in candidate_info:
+                        capped_spread = np.clip(spread, lower_bound, upper_bound)
+                        new_radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
+                        new_radius = min(new_radius, params['radius_max'])
 
-            db = DBSCAN(eps=parent_radius, min_samples=1).fit(centers)
-            labels = db.labels_
-            unique_labels = np.unique(labels)
+                        new_sphere = Sphere(center, radius=new_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
+                        new_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
-            for label in unique_labels:
-                label_indices = np.where(labels == label)[0]
-                grouped_centers = centers[label_indices]
-                grouped_spreads = spreads[label_indices]
+                        if len(new_sphere.contained_points) >= params['min_points_threshold']:
+                            new_spheres.append(new_sphere)
+                            segmentation_ids[new_sphere.contained_points] = sphere_id # Assign current cluster ID
+                            cluster.add_sphere(new_sphere)
+                            cylinder_tracker.add_cylinder(sphere, new_sphere, capped_spread) # Use capped_spread for cylinder radius
 
-                temp_spheres = []
-                weights = []
-                for center, spread in zip(grouped_centers, grouped_spreads):
-                    radius = max(spread * params['sphere_factor'], params['radius_min'])
-                    radius = min(radius, params['radius_max'])
-                    # radius = min(spread * params['sphere_factor'], params['radius_max'])
-                    temp = Sphere(center, radius=radius, thickness=params["sphere_thickness"], spread=spread)
-                    temp.assign_points(points, unsegmented_points)
-                    if len(temp.contained_points) > params['min_points_threshold']:
-                        temp_spheres.append(temp)
-                        weights.append(len(temp.contained_points))
+                # Subcase: Merging requested - use DBSCAN to group candidates first
+                elif params['merging_procedure'] in ['weighted', 'enclosed', 'subset']:
+                    # === Merge close candidates using DBSCAN ===
+                    centers = np.array([c for c, _ in candidate_info])
+                    spreads = np.array([s for _, s in candidate_info]) # Already cap the spreads
 
-                if not temp_spheres:
-                    continue
+                    db = DBSCAN(eps=parent_radius, min_samples=1).fit(centers)
+                    labels = db.labels_
+                    unique_labels = np.unique(labels)
 
-                weights = np.array(weights)
-                total_weight = np.sum(weights)
+                    for label in unique_labels:
+                        label_indices = np.where(labels == label)[0]
+                        grouped_centers = centers[label_indices]
+                        grouped_spreads = spreads[label_indices]
 
-                if len(temp_spheres) == 1:
-                    merged_sphere = temp_spheres[0]
-                    capped_spread = np.clip(merged_sphere.spread, lower_bound, upper_bound)
-                    merged_sphere.radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
-                    merged_sphere.radius = min(merged_sphere.radius, params['radius_max'])
-                    merged_sphere.spread = capped_spread
-                    merged_sphere.assign_points(points, unsegmented_points)
+                        temp_spheres = []
+                        weights = []
+                        for center, spread in zip(grouped_centers, grouped_spreads):
+                            capped_spread = np.clip(spread, lower_bound, upper_bound)
 
-                else:
-                    if params['merging_procedure'] == 'weighted':
-                        # Case of weighted radius plus distance
-                        sub_centers = np.array([s.center for s in temp_spheres])
-                        sub_spreads = np.array([s.spread for s in temp_spheres])
-                        merged_center = np.average(sub_centers, axis=0, weights=weights)
-                        merged_spread = np.average(sub_spreads, weights=weights)
+                            new_radius = capped_spread * params['sphere_factor']
+                            new_radius = max(new_radius, params['radius_min'])
+                            new_radius = min(new_radius, params['radius_max'])
+                            temp = Sphere(center, radius=new_radius, thickness=params["sphere_thickness"], spread=spread)
+                            temp.assign_points(points, unsegmented_points, params['device'], point_tree)
+                            if len(temp.contained_points) > params['min_points_threshold']:
+                                temp_spheres.append(temp)
+                                weights.append(len(temp.contained_points))
 
-                        # === Compute pairwise distances ===
-                        diffs = sub_centers[:, np.newaxis, :] - sub_centers[np.newaxis, :, :]  # shape (n, n, 3)
-                        pairwise_dists = np.linalg.norm(diffs, axis=2)  # shape (n, n)
+                        if not temp_spheres:
+                            continue
 
-                        # Upper triangle indices (excluding diagonal)
-                        n = len(sub_centers)
-                        i_indices, j_indices = np.triu_indices(n, k=1)
+                        weights = np.array(weights)
+                        total_weight = np.sum(weights)
 
-                        flat_dists = pairwise_dists[i_indices, j_indices]
+                        if len(temp_spheres) == 1:
+                            merged_sphere = temp_spheres[0]
+                            capped_spread = np.clip(merged_sphere.spread, lower_bound, upper_bound)
+                            merged_sphere.radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
+                            merged_sphere.radius = min(merged_sphere.radius, params['radius_max'])
+                            merged_sphere.spread = capped_spread
+                            merged_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
-                        # Compute pairwise weights as sum of weights of the two spheres
-                        pair_weights = weights[i_indices] + weights[j_indices]
-
-                        # Avoid division by zero
-                        if pair_weights.sum() > 0:
-                            weighted_avg_dist = np.average(flat_dists, weights=pair_weights)
                         else:
-                            weighted_avg_dist = 0.0
+                            if params['merging_procedure'] == 'weighted':
+                                # Case of weighted radius plus distance
+                                sub_centers = np.array([s.center for s in temp_spheres])
+                                sub_spreads = np.array([s.spread for s in temp_spheres])
+                                merged_center = np.average(sub_centers, axis=0, weights=weights)
+                                merged_spread = np.average(sub_spreads, weights=weights)
 
-                        capped_spread = np.clip(merged_spread, lower_bound, upper_bound)
-                        adjusted_radius = max(capped_spread * params['sphere_factor'] + 0.5 * weighted_avg_dist, params['radius_min'])
-                        adjusted_radius = min(adjusted_radius, params['radius_max'])
-                        merged_sphere = Sphere(merged_center, radius=adjusted_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
+                                # === Compute pairwise distances ===
+                                diffs = sub_centers[:, np.newaxis, :] - sub_centers[np.newaxis, :, :]  # shape (n, n, 3)
+                                pairwise_dists = np.linalg.norm(diffs, axis=2)  # shape (n, n)
 
-                    elif params['merging_procedure'] == 'enclosed':
-                        # Center is weighted average as well, but the sphere is constructed to be so large that all other spheres are enclosed
-                        sub_centers = np.array([s.center for s in temp_spheres])
-                        sub_spreads = np.array([s.spread for s in temp_spheres])
-                        merged_center = np.average(sub_centers, axis=0, weights=weights)
-                        merged_spread = np.average(sub_spreads, weights=weights)
+                                # Upper triangle indices (excluding diagonal)
+                                n = len(sub_centers)
+                                i_indices, j_indices = np.triu_indices(n, k=1)
 
-                        distances = [np.linalg.norm(merged_center - s.center) + s.radius for s in temp_spheres]
-                        adjusted_radius = max(distances)
+                                flat_dists = pairwise_dists[i_indices, j_indices]
 
-                        merged_sphere = Sphere(merged_center, radius=adjusted_radius,
-                                                thickness=params["sphere_thickness"],
-                                                spread=merged_spread, 
-                                                thickness_type=params["sphere_thickness_type"])
-                    else:
-                        raise ValueError("Unknown merging_procedure specified in params.")
+                                # Compute pairwise weights as sum of weights of the two spheres
+                                pair_weights = weights[i_indices] + weights[j_indices]
 
-                merged_sphere.assign_points(points, unsegmented_points)
-                if len(merged_sphere.contained_points) > params['min_points_threshold']:
-                    new_spheres.append(merged_sphere)
-                    segmentation_ids[merged_sphere.contained_points] = cluster_id
-                    unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-                    cluster.add_sphere(merged_sphere)
-                    cylinder_tracker.add_cylinder(sphere, merged_sphere, merged_sphere.spread)
+                                # Avoid division by zero
+                                if pair_weights.sum() > 0:
+                                    weighted_avg_dist = np.average(flat_dists, weights=pair_weights)
+                                else:
+                                    weighted_avg_dist = 0.0
+
+                                capped_spread = np.clip(merged_spread, lower_bound, upper_bound)
+                                adjusted_radius = max(capped_spread * params['sphere_factor'] + 0.5 * weighted_avg_dist, params['radius_min'])
+                                adjusted_radius = min(adjusted_radius, params['radius_max'])
+                                merged_sphere = Sphere(merged_center, radius=adjusted_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
+
+                            elif params['merging_procedure'] == 'enclosed':
+                                # Center is weighted average as well, but the sphere is constructed to be so large that all other spheres are enclosed
+                                sub_centers = np.array([s.center for s in temp_spheres])
+                                sub_spreads = np.array([s.spread for s in temp_spheres])
+                                merged_center = np.average(sub_centers, axis=0, weights=weights)
+                                merged_spread = np.average(sub_spreads, weights=weights)
+
+                                distances = [np.linalg.norm(merged_center - s.center) + s.radius for s in temp_spheres]
+                                adjusted_radius = max(distances)
+
+                                merged_sphere = Sphere(merged_center, radius=adjusted_radius,
+                                                        thickness=params["sphere_thickness"],
+                                                        spread=merged_spread, 
+                                                        thickness_type=params["sphere_thickness_type"])
+                                
+                            elif params['merging_procedure'] == 'subset':
+                                # Compute the weighted center of candidate spheres.
+                                candidate_centers = np.array([s.center for s in temp_spheres])
+                                merged_center = np.average(candidate_centers, axis=0, weights=weights)
+                                
+                                # Combine all candidate spheres' contained points.
+                                subset_indices = np.concatenate([s.contained_points for s in temp_spheres])
+                                subset_indices = np.unique(subset_indices)
+                                
+                                # Compute the spread as the average distance from the merged center.
+                                subset_points = points[subset_indices]
+                                distances = np.linalg.norm(subset_points - merged_center, axis=1)
+                                merged_spread = np.mean(distances)
+                                
+                                # Cap the spread based on parent's lower and upper bounds.
+                                capped_spread = np.clip(merged_spread, lower_bound, upper_bound)
+                                
+                                # Determine the new sphere's radius.
+                                new_radius = max(capped_spread * params['sphere_factor'], params['radius_min'])
+                                new_radius = min(new_radius, params['radius_max'])
+                                
+                                # Create the merged sphere with the calculated parameters.
+                                merged_sphere = Sphere(merged_center, 
+                                                    radius=new_radius, 
+                                                    thickness=params["sphere_thickness"], 
+                                                    spread=capped_spread, 
+                                                    thickness_type=params["sphere_thickness_type"])
+                                
+                            else:
+                                raise ValueError("Unknown merging_procedure specified in params.")
+
+                        merged_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+                        if len(merged_sphere.contained_points) > params['min_points_threshold']:
+                            new_spheres.append(merged_sphere)
+                            segmentation_ids[merged_sphere.contained_points] = sphere_id
+
+                            cluster.add_sphere(merged_sphere)
+                            cylinder_tracker.add_cylinder(sphere, merged_sphere, merged_sphere.spread)
+
+
+            # Segment points to cylinders after each sphere
+            if params['segmentation_type'] == 'cylinder':
+                if len(cylinder_tracker.recent_cylinders) > 0:
+                    new_unsegmented_points = cylinder_proximity_based_segmentation(
+                        points, unsegmented_points, sphere, cylinder_tracker.recent_cylinders,
+                        eps=params['eps_cylinder'], device=params['device'], batch_size=10**5, point_tree=point_tree
+                    )
+                    unsegmented_points = new_unsegmented_points
+                    # Clear recent cylinders for the next iteration.
+                    cylinder_tracker.recent_cylinders = []
+
+            elif params['segmentation_type'] == 'sphere':
+                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+
+            sphere_id += 1
 
         if not new_spheres:
             break
+
+        grown_init = True #  The initial sphere did trigger new growth
         old_spheres = new_spheres
 
+    # Failsafe for cylinder segmentation
+    if not grown_init and params['segmentation_type']=='cylinder':
+        # Create a boolean mask for unsegmented_points: keep those whose segmentation id is not equal to initial_sphere_id.
+        mask = segmentation_ids[unsegmented_points] != initial_sphere_id
+        # Apply the mask to obtain the new array of unsegmented point indices.
+        unsegmented_points = unsegmented_points[mask]
+
     cluster.get_outer_spheres()
-    return cluster, segmentation_ids, unsegmented_points
+    return cluster, sphere_id, segmentation_ids, unsegmented_points
 
 
 def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker, params):
@@ -978,13 +1294,13 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
     return connected_clusters
 
     
-def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, clusters ):
+def grow_cluster(points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, clusters, point_tree ):
     """
     Grows a cluster from an initial sphere using sphere-based expansion.
     
     Parameters:
       - points: The full point cloud.
-      - cluster_id: ID of the new cluster.
+      - sphere_id: ID of the new cluster.
       - initial_sphere: The seed sphere to start clustering.
       - segmentation_ids: Array tracking cluster assignments.
       - unsegmented_points: Indices of points not yet assigned to a cluster.
@@ -998,10 +1314,10 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
     """
 
     # Step 1: Create initial main cluster
-    main_cluster, segmentation_ids, unsegmented_points = cluster_points(
-        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params
+    main_cluster, sphere_id, segmentation_ids, unsegmented_points = cluster_points(
+        points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params, point_tree=point_tree
     )
-    cluster_id += 1
+    sphere_id += 1
 
 
     search_radius = params['smallest_search_radius']
@@ -1021,12 +1337,12 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
                 while neighborhood_points.size != 0:
                     #print(f"Check neighbourhood points, len {neighborhood_points.size}")
 
-                    seed_sphere = find_seed_sphere(points, neighborhood_points, params['sphere_radius'], params['sphere_thickness'])
-                    new_cluster, segmentation_ids, unsegmented_points = cluster_points(
-                        points, cluster_id, seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params)
+                    seed_sphere = find_seed_sphere(points, neighborhood_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
+                    new_cluster, sphere_id, segmentation_ids, unsegmented_points = cluster_points(
+                        points, sphere_id, seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params, point_tree=point_tree)
 
                     new_clusters.append(new_cluster)
-                    cluster_id += 1
+                    sphere_id += 1
 
                     neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius)
 
@@ -1051,7 +1367,7 @@ def grow_cluster(points, cluster_id, initial_sphere, segmentation_ids, unsegment
 
     # Final step: Add main cluster and any unconnected new clusters
     clusters.append(main_cluster)
-    return cluster_id, segmentation_ids, unsegmented_points
+    return sphere_id, segmentation_ids, unsegmented_points
 
 
 
@@ -1084,7 +1400,8 @@ def final_merge_clusters(clusters, points, cylinder_tracker: CylinderTracker, se
             continue
 
         main_cluster = clusters[i]
-        main_id = main_cluster.id
+        if len(main_cluster.spheres) == 1:
+            continue
         reset_reassigned_flags_for_cluster(main_cluster, cylinder_tracker)
         
         # Initialize with the outer spheres of the main cluster.
@@ -1127,7 +1444,8 @@ def final_merge_clusters(clusters, points, cylinder_tracker: CylinderTracker, se
 
                 # Update segmentation and merge candidate cluster's spheres into main_cluster.
                 for sphere in candidate_cluster.spheres:
-                    segmentation_ids[sphere.contained_points] = main_id
+                    # segmentation_ids[sphere.contained_points] = main_id
+                    segmentation_ids[sphere.contained_points] = 0
                     if sphere.is_seed:
                         sphere.is_seed = False
 
@@ -1145,36 +1463,40 @@ def final_merge_clusters(clusters, points, cylinder_tracker: CylinderTracker, se
         
     remaining_clusters = [c for idx, c in enumerate(clusters) if idx not in merged_indices]
     return remaining_clusters, segmentation_ids
-                   
 
+                   
 def correct_cylinder_radii(cylinder_tracker, params):
     max_growth = params['max_spread_growth']
-    min_growth = params['min_spread_growth']  # default to 1.0 if not provided
-    # Identify root cylinders (those without a parent)
+    min_growth = params['min_spread_growth']  # typically defaults to 1.0 if not provided
+    only_correct_connection = params.get('only_correct_connection', False)
+    # Identify all root cylinders (those without a parent)
     roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
     for root in roots:
-        _traverse_and_correct(root, cylinder_tracker, min_growth, max_growth)
+        _traverse_and_correct(root, cylinder_tracker, min_growth, max_growth, only_correct_connection)
 
-def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth):
+def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth, only_correct_connection=False):
     for child_id in parent_cyl.child_cylinder_ids:
         child = cylinder_tracker.cylinders[child_id]
-        # Compute allowed lower and upper radii based on the parent's radius.
         allowed_lower = parent_cyl.radius * min_growth
         allowed_upper = parent_cyl.radius * max_growth
-        # Clip the child's radius to lie within the allowed range.
-        new_radius = np.clip(child.radius, allowed_lower, allowed_upper)
-        if child.radius != new_radius:
-            #print(f"Correcting cylinder ID {child.id}: radius {child.radius:.3f} -> {new_radius:.3f}")
-            child.radius = new_radius
-            child.volume = np.pi * (child.radius ** 2) * child.length
-        _traverse_and_correct(child, cylinder_tracker, min_growth, max_growth)
+        # Apply the correction only if either we're not restricting or this child is of connection type.
+        if (not only_correct_connection) or (child.cyl_type == "connection"):
+            new_radius = np.clip(child.radius, allowed_lower, allowed_upper)
+            if child.radius != new_radius:
+                # Uncomment or add logging as needed:
+                # print(f"Correcting cylinder ID {child.id}: radius {child.radius:.3f} -> {new_radius:.3f}")
+                child.radius = new_radius
+                child.volume = np.pi * (child.radius ** 2) * child.length
+        # Recursively process all children regardless of whether the correction was applied.
+        _traverse_and_correct(child, cylinder_tracker, min_growth, max_growth, only_correct_connection)
+
 
 
 
 def main():
     print("Step 1: Loading the cloud")
-    # file_path = "data/postprocessed/TreeLearn/32_17_pred_denoised_supsamp_k10.txt"
-    file_path = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp.txt"
+    file_path = "data/postprocessed/TreeLearn/32_17_pred_denoised_supsamp_k10.txt"
+    # file_path = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp.txt"
     points = load_pointcloud(file_path)
 
     print("Step 2: Init params and arrays")
@@ -1183,55 +1505,36 @@ def main():
     unsegmented_points = np.arange(num_points)
 
     clusters = []
-    cluster_id = 0
+    sphere_id = 0
     cylinder_tracker = CylinderTracker()
 
-    # params = {
-    # 'eps': 0.05,
-    # 'min_samples': 2,
-    # 'sphere_factor': 2.0,
-    # 'radius_min': 0.10,
-    # 'radius_max': 0.4,
-    # 'min_growth_points': 10,
-    # 'min_points_threshold': 4,
-    # 'max_spread_growth': 1.2,
-    # 'min_spread_growth': 0.2,
-    # 'smallest_search_radius': 0.1,
-    # 'search_radius_step': 0.1,
-    # 'max_search_radius': 0.3,
-    # 'max_dist': 0.4,
-    # 'max_angle': 60,
-    # 'distance_type': 'center',
-    # 'sphere_radius': 0.15,
-    # 'sphere_thickness': 0.33,
-    # 'sphere_thickness_type': 'relative',
-    # 'clustering_algorithm': 'euclidian',
-    # 'merging_procedure': 'weighted',
-    # 'clustering_linkage': 'single'
-    # }
-
     params = {
-        'eps': 0.05,
-        'min_samples': 2,
+        'eps': np.radians(20), # 0.05
+        'min_samples': 5,
         'sphere_factor': 2.0,
         'radius_min': 0.15,
         'radius_max': 0.4,
         'min_growth_points': 10,
         'min_points_threshold': 4,
-        'max_spread_growth': 1.2,
+        'max_spread_growth': 1.05,
         'min_spread_growth': 0.33,
         'smallest_search_radius': 0.1,
         'search_radius_step': 0.1,
         'max_search_radius': 0.3,
         'max_dist': 0.4,
-        'max_angle': 60,
+        'max_angle': 30,
         'distance_type': 'center',
         'sphere_radius': 0.15,
         'sphere_thickness': 0.33,
         'sphere_thickness_type': 'relative',
-        'clustering_algorithm': 'euclidian',
+        'clustering_algorithm': 'dbscan',
         'merging_procedure': 'weighted',
-        'clustering_linkage': 'single'
+        'clustering_linkage': 'single',
+        'clustering_type': 'angular', # Or euclidian
+        'eps_cylinder': 0.1,
+        'segmentation_type': 'cylinder',
+        'only_correct_connections': True,
+        'device': get_device(GPU=True),
     }
 
     # Current best
@@ -1258,23 +1561,24 @@ def main():
     #     'clustering_linkage': 'single'
     # }
 
+    point_tree = cKDTree(points)
 
     print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
 
     # Initialize tqdm bar for total points
     progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
 
-    initial_sphere = initialize_first_sphere(points, 0.5, params['sphere_thickness'])
-    cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
-        points, cluster_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters)
+    initial_sphere = initialize_first_sphere(points, 0.3, params['sphere_thickness'])
+    sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
+        points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
     progress_bar.n = num_points - unsegmented_points.size
     progress_bar.refresh()
 
     while unsegmented_points.size > 0:
 
-        new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'])
-        new_seed_sphere.assign_points(points, unsegmented_points)
+        new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
+        new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
         if new_seed_sphere.contained_points.size < params['min_growth_points']:
             # Mark these points so they won’t be reused
@@ -1282,8 +1586,8 @@ def main():
             unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
             continue
 
-        cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
-            points, cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters)
+        sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
+            points, sphere_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
         progress_bar.n = num_points - unsegmented_points.size
         progress_bar.refresh()
@@ -1335,4 +1639,4 @@ if __name__ == "__main__":
 
     # Create a Stats object, sort by cumulative time, and print the top 10 entries
     stats = pstats.Stats(profiler).sort_stats("cumulative")
-    stats.print_stats(10)
+    # stats.print_stats(50)

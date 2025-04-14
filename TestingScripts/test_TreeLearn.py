@@ -27,7 +27,7 @@ def perform_test(offset_model, noise_model):
 
     model_dict = load_model(model_type="treelearn", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
 
-    nn_eval(model_dict, rasterized_data=False, plot_savedir=plot_savedir)
+    nn_eval(model_dict, model_type="treelearn", rasterized_data=False, plot_savedir=plot_savedir)
 
 if __name__ == "__main__":
 

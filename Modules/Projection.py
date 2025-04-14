@@ -16,7 +16,7 @@ from Modules.Utils import get_device
 from Modules.Features import add_features
 
 
-def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, IDs, device):
+def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, IDs, device, move_points_to_mantle=True):
     """
     Find the closest cylinder to a batch of points using GPU acceleration with PyTorch,
     using a unified measure based on projection vectors.
@@ -47,7 +47,7 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
 
     # Compute dot product to check perpendicularity
     dot_products = torch.sum(projection_vectors * axis_unit[None, :, :], dim=2)  # Shape: (N, M)
-    perpendicular_mask = torch.isclose(dot_products, torch.tensor(0.0, device=device), atol=1e-6)  # Boolean mask
+    perpendicular_mask = torch.isclose(dot_products, torch.tensor(0.0, device=device), atol=1e-3)  # Boolean mask
 
     # Step 3.1: Extract parallel component of projection vector
     parallel_component = dot_products[..., None] * axis_unit[None, :, :]
@@ -86,20 +86,21 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
     closest_indices = torch.argmin(distances, dim=1)
     closest_distances = distances[range(len(points)), closest_indices]
 
-    # Step 5: Adjust the non-perpendicular projections to move to the mantle **after** selecting the closest cylinder
-    # Compute distance to both endpoints of new axis
-    dist_to_start = torch.norm(projection_on_new_axis - new_axis_start, dim=2, keepdim=True)
-    dist_to_end = torch.norm(projection_on_new_axis - new_axis_end, dim=2, keepdim=True)
+    if move_points_to_mantle:
+        # Step 5: Adjust the non-perpendicular projections to move to the mantle **after** selecting the closest cylinder
+        # Compute distance to both endpoints of new axis
+        dist_to_start = torch.norm(projection_on_new_axis - new_axis_start, dim=2, keepdim=True)
+        dist_to_end = torch.norm(projection_on_new_axis - new_axis_end, dim=2, keepdim=True)
 
-    # Choose the closer endpoint for projection
-    closer_to_start = dist_to_start < dist_to_end
-    projected_face_points = torch.where(closer_to_start, new_axis_start, new_axis_end)
+        # Choose the closer endpoint for projection
+        closer_to_start = dist_to_start < dist_to_end
+        projected_face_points = torch.where(closer_to_start, new_axis_start, new_axis_end)
 
-    # Combine surface and face projections into `final_mantle_projection_points`
-    final_mantle_projection_points = torch.where(perpendicular_mask[..., None], surface_projection_points, projected_face_points)
+        # Combine surface and face projections into `final_mantle_projection_points`
+        final_mantle_projection_points = torch.where(perpendicular_mask[..., None], surface_projection_points, projected_face_points)
 
-    # Select the final projection point based on the closest cylinder
-    final_projection_points = final_mantle_projection_points[range(len(points)), closest_indices]
+        # Select the final projection point based on the closest cylinder
+        final_projection_points = final_mantle_projection_points[range(len(points)), closest_indices]
 
     # Compute final offsets
     closest_offsets = final_projection_points - points

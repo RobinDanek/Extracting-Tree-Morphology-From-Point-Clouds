@@ -95,7 +95,7 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
             upsampled_data = data
 
         # Save output
-        output_path = os.path.join(outputDir, os.path.basename(cloud).replace(".txt", f"_supsamp_k{k}.txt"))
+        output_path = os.path.join(outputDir, os.path.basename(cloud).replace(".txt", f"_supsamp_k{k}_i{i}.txt"))
         np.savetxt(output_path, upsampled_data, fmt="%.6f")
 
     return
@@ -112,4 +112,4 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10)
+    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10, iterations=10)
