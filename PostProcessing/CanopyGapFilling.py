@@ -671,8 +671,6 @@ def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1, sphe
     spread = max(spread, 0.05)
     radius = max(spread * 2, 0.1)
 
-    print(f"First sphere with {radius:.3f} radius and {spread:.3f} spread. Num points {len(base_points)}")
-
     return Sphere(center, radius=radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
 
 
