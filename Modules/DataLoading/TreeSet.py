@@ -6,9 +6,10 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import json
 from collections import defaultdict
+import laspy
 
 class TreeSet(Dataset):
-    def __init__(self, json_paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None):
+    def __init__(self, paths, training, logger=None, data_augmentations=None, noise_distance=0.05, noise_root=None, process_json=True):
         """
         Dataset for handling point clouds and their associated labels (semantic and offset).
 
@@ -25,16 +26,20 @@ class TreeSet(Dataset):
         self.data_paths = []
 
         # Ensure json_paths is a list
-        if isinstance(json_paths, str):
+        if isinstance(paths, str):
             json_paths = [json_paths]
 
-        for json_path in json_paths:
-            with open(json_path, 'r') as f:
-                new_data = json.load(f)
+        if process_json:
+            for json_path in paths:
+                with open(json_path, 'r') as f:
+                    new_data = json.load(f)
 
-            # Merge paths
-            for data_path in new_data:
-                self.data_paths.append( data_path )
+                # Merge paths
+                for data_path in new_data:
+                    self.data_paths.append( data_path )
+        
+        else:
+            self.data_paths = paths
         
         # Noise dataset paths (optional)
         self.noise_root = noise_root
@@ -70,7 +75,28 @@ class TreeSet(Dataset):
         # Load main data
         data_path = self.data_paths[idx]
         file_name = os.path.basename(data_path)
-        data = np.load(data_path)
+
+        try:
+            data = np.load(data_path)
+        except Exception:
+            pass
+        try:
+            data = np.loadtxt(data_path)
+        except Exception:
+            pass
+        try:
+            las = laspy.read(data_path)
+            data = np.vstack((las.x, las.y, las.z)).T
+        except (ImportError, laspy.errors.LaspyException):
+            pass
+
+
+        if data.shape[1] == 3: # e.g. plain XYZ → 3 columns
+            pad_cols = 8
+            data = np.hstack( # append zero‑columns
+                (data, np.zeros((data.shape[0], pad_cols), dtype=data.dtype))
+            )
+
         points, offsets, features = (
             torch.from_numpy(data[:, :3]).float(),
             torch.from_numpy(data[:, 3:6]).float(),

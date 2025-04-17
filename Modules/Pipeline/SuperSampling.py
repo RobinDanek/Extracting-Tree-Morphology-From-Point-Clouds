@@ -5,6 +5,7 @@ import os
 import argparse
 import json
 from scipy.spatial import cKDTree
+import laspy
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train TreeLearn model with custom parameters.")
@@ -24,7 +25,19 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
         os.makedirs(outputDir)
 
     for cloud in cloudList:
-        data = np.loadtxt(cloud)  # Load point cloud (assumes x, y, z format)
+        # 1) Try plain text:
+        try:
+            data = np.loadtxt(cloud)
+            data = data[:, :3]
+        except Exception:
+            pass
+
+        # 2) Try laspy
+        try:
+            las = laspy.read(cloud)
+            data = np.vstack((las.x, las.y, las.z)).T
+        except (ImportError, laspy.errors.LaspyException):
+            pass
         
         # Determine true minimum height
         min_z = np.min(data[:, 2])  # Lowest z-coordinate in the cloud
@@ -95,7 +108,9 @@ def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_onl
             upsampled_data = data
 
         # Save output
-        output_path = os.path.join(outputDir, os.path.basename(cloud).replace(".txt", f"_supsamp_k{k}_i{i}.txt"))
+        filename = os.path.splitext(os.path.basename(cloud))[0]
+
+        output_path = os.path.join(outputDir, f"{filename}_supsamp.txt")
         np.savetxt(output_path, upsampled_data, fmt="%.6f")
 
     return
@@ -106,10 +121,11 @@ if __name__ == "__main__":
 
     # cloudList = ["data/predicted/PointTransformerV3/raw/32_17_pred_denoised.txt"]
     # outputDir = os.path.join('data', 'postprocessed', 'PointTransformerV3')
-    cloudList = ["data/predicted/TreeLearn/raw/32_17_pred_denoised.txt"]
+    # cloudList = ["data/predicted/TreeLearn/raw/34_38_pred_denoised.txt"]
+    cloudList = [ "data/raw/additional/AEW42_GD_124_hTLS.laz"]
     outputDir = os.path.join('data', 'postprocessed', 'TreeLearn')
     os.makedirs( outputDir, exist_ok=True )
 
     args = parse_args()
 
-    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10, iterations=10)
+    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10, iterations=5)

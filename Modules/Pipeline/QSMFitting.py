@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import open3d as o3d
 import pyransac3d as pyrsc
+import os
 from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from collections import defaultdict, Counter
 from tqdm import tqdm
@@ -10,6 +11,7 @@ from Modules.Projection import closest_cylinder_cuda_batch
 from Modules.Utils import get_device
 import random
 import torch
+import laspy
 
 # TODO: 
 # - Mark spheres as outer if they make a certain turn during spherre following
@@ -572,14 +574,6 @@ def fit_circle_2d(points_2d):
     center = np.array([a, b])
     radius = np.sqrt(c + a**2 + b**2)
     return center, radius
-
-def load_pointcloud(file_path):
-    """
-    Load the point cloud.
-    In a real implementation you might load from .ply, .txt, or another format.
-    For now, assume the file is a text file with x, y, z values.
-    """
-    return np.loadtxt(file_path)
 
 
 def filter_points_by_height(points, min_height):
@@ -1491,150 +1485,196 @@ def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth, 
 
 
 
-def main():
+def fitQSM(cloud_list, outputDir):
     print("Step 1: Loading the cloud")
-    file_path = "data/postprocessed/TreeLearn/32_17_pred_denoised_supsamp_k10.txt"
-    # file_path = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp.txt"
-    points = load_pointcloud(file_path)
+    # file_path = "data/postprocessed/TreeLearn/34_38_pred_denoised_supsamp_k10.txt"
+    # file_path = "data/postprocessed/TreeLearn/AEW42_GD_124_hTLS_supsamp_k10.txt"
 
-    print("Step 2: Init params and arrays")
-    num_points = len(points)
-    segmentation_ids = -np.ones(num_points, dtype=int)
-    unsegmented_points = np.arange(num_points)
+    # import laspy
+    # las = laspy.read( "data/postprocessed/TreeLearn/AEW42_GD_124_hTLS_supsamp_k10.txt" )
+    # points = np.vstack((las.x, las.y, las.z)).T
 
-    clusters = []
-    sphere_id = 0
-    cylinder_tracker = CylinderTracker()
+    for cloud_path in cloud_list:
 
-    params = {
-        'eps': np.radians(20), # 0.05
-        'min_samples': 5,
-        'sphere_factor': 2.0,
-        'radius_min': 0.15,
-        'radius_max': 0.4,
-        'min_growth_points': 10,
-        'min_points_threshold': 4,
-        'max_spread_growth': 1.05,
-        'min_spread_growth': 0.33,
-        'smallest_search_radius': 0.1,
-        'search_radius_step': 0.1,
-        'max_search_radius': 0.3,
-        'max_dist': 0.4,
-        'max_angle': 30,
-        'distance_type': 'center',
-        'sphere_radius': 0.15,
-        'sphere_thickness': 0.33,
-        'sphere_thickness_type': 'relative',
-        'clustering_algorithm': 'dbscan',
-        'merging_procedure': 'weighted',
-        'clustering_linkage': 'single',
-        'clustering_type': 'angular', # Or euclidian
-        'eps_cylinder': 0.1,
-        'segmentation_type': 'cylinder',
-        'only_correct_connections': True,
-        'device': get_device(GPU=True),
-    }
+        try:
+            points = np.loadtxt(cloud_path)
+        except Exception:
+            pass
 
-    # Current best
-    # params = {
-    #     'eps': 0.05,
-    #     'min_samples': 2,
-    #     'sphere_factor': 2.0,
-    #     'radius_min': 0.15,
-    #     'radius_max': 0.4,
-    #     'min_growth_points': 10,
-    #     'min_points_threshold': 4,
-    #     'max_spread_growth': 1.2,
-    #     'min_spread_growth': 0.0,
-    #     'smallest_search_radius': 0.1,
-    #     'search_radius_step': 0.1,
-    #     'max_search_radius': 0.3,
-    #     'max_dist': 0.4,
-    #     'max_angle': 60,
-    #     'distance_type': 'center',
-    #     'sphere_radius': 0.15,
-    #     'sphere_thickness': 0.33,
-    #     'sphere_thickness_type': 'relative',
-    #     'clustering_algorithm': 'agglomerative',
-    #     'clustering_linkage': 'single'
-    # }
+        try:
+            las = laspy.read( cloud_path )
+            points = np.vstack((las.x, las.y, las.z)).T
+        except (ImportError, laspy.errors.LaspyException):
+            pass
 
-    point_tree = cKDTree(points)
+        print("Step 2: Init params and arrays")
+        num_points = len(points)
+        segmentation_ids = -np.ones(num_points, dtype=int)
+        unsegmented_points = np.arange(num_points)
 
-    print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
+        clusters = []
+        sphere_id = 0
+        cylinder_tracker = CylinderTracker()
 
-    # Initialize tqdm bar for total points
-    progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
+        params = {
+            'eps': np.radians(5), # 0.05
+            'min_samples': 5,
+            'sphere_factor': 1.5,
+            'radius_min': 0.1,
+            'radius_max': 0.4,
+            'min_growth_points': 10,
+            'min_points_threshold': 4,
+            'max_spread_growth': 1.2,
+            'min_spread_growth': 0.33,
+            'smallest_search_radius': 0.1,
+            'search_radius_step': 0.1,
+            'max_search_radius': 0.3,
+            'max_dist': 0.3,
+            'max_angle': 30,
+            'distance_type': 'center',
+            'sphere_radius': 0.15,
+            'sphere_thickness': 0.33,
+            'sphere_thickness_type': 'relative',
+            'clustering_algorithm': 'dbscan',
+            'merging_procedure': 'weighted',
+            'clustering_linkage': 'single',
+            'clustering_type': 'angular', # Or euclidian
+            'eps_cylinder': 0.1,
+            'segmentation_type': 'sphere',
+            'only_correct_connections': True,
+            'device': get_device(GPU=True),
+        }
 
-    initial_sphere = initialize_first_sphere(points, 0.3, params['sphere_thickness'])
-    sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
-        points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
+        # params = {
+        #     'eps': np.radians(20), # 0.05
+        #     'min_samples': 5,
+        #     'sphere_factor': 2.0,
+        #     'radius_min': 0.15,
+        #     'radius_max': 0.4,
+        #     'min_growth_points': 10,
+        #     'min_points_threshold': 4,
+        #     'max_spread_growth': 1.05,
+        #     'min_spread_growth': 0.33,
+        #     'smallest_search_radius': 0.1,
+        #     'search_radius_step': 0.1,
+        #     'max_search_radius': 0.3,
+        #     'max_dist': 0.4,
+        #     'max_angle': 30,
+        #     'distance_type': 'center',
+        #     'sphere_radius': 0.15,
+        #     'sphere_thickness': 0.33,
+        #     'sphere_thickness_type': 'relative',
+        #     'clustering_algorithm': 'dbscan',
+        #     'merging_procedure': 'weighted',
+        #     'clustering_linkage': 'single',
+        #     'clustering_type': 'angular', # Or euclidian
+        #     'eps_cylinder': 0.1,
+        #     'segmentation_type': 'cylinder',
+        #     'only_correct_connections': True,
+        #     'device': get_device(GPU=True),
+        # }
 
-    progress_bar.n = num_points - unsegmented_points.size
-    progress_bar.refresh()
+        # Current best
+        # params = {
+        #     'eps': 0.05,
+        #     'min_samples': 2,
+        #     'sphere_factor': 2.0,
+        #     'radius_min': 0.15,
+        #     'radius_max': 0.4,
+        #     'min_growth_points': 10,
+        #     'min_points_threshold': 4,
+        #     'max_spread_growth': 1.2,
+        #     'min_spread_growth': 0.0,
+        #     'smallest_search_radius': 0.1,
+        #     'search_radius_step': 0.1,
+        #     'max_search_radius': 0.3,
+        #     'max_dist': 0.4,
+        #     'max_angle': 60,
+        #     'distance_type': 'center',
+        #     'sphere_radius': 0.15,
+        #     'sphere_thickness': 0.33,
+        #     'sphere_thickness_type': 'relative',
+        #     'clustering_algorithm': 'agglomerative',
+        #     'clustering_linkage': 'single'
+        # }
 
-    while unsegmented_points.size > 0:
+        point_tree = cKDTree(points)
 
-        new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
-        new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+        print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
 
-        if new_seed_sphere.contained_points.size < params['min_growth_points']:
-            # Mark these points so they won’t be reused
-            segmentation_ids[new_seed_sphere.contained_points] = -2  # Or some special ignored value
-            unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-            continue
+        # Initialize tqdm bar for total points
+        progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
 
+        initial_sphere = initialize_first_sphere(points, 0.3, params['sphere_thickness'])
         sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
-            points, sphere_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
+            points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
         progress_bar.n = num_points - unsegmented_points.size
         progress_bar.refresh()
 
-    print("Step 4: Merge close clusters")
-    clusters, segmentation_ids = final_merge_clusters(
-        clusters, points, cylinder_tracker, segmentation_ids, params
-    )
+        while unsegmented_points.size > 0:
 
-    print(f"{len(clusters)} clusters left")
-    roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
-    print(f"🌳 Number of root cylinders: {len(roots)}")
-    
-    print("Step 5: Corrections")
+            new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
+            new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
-    # Correct cylinder radii in all clusters based on parent's radius
-    correct_cylinder_radii(cylinder_tracker, params)
+            if new_seed_sphere.contained_points.size < params['min_growth_points']:
+                # Mark these points so they won’t be reused
+                segmentation_ids[new_seed_sphere.contained_points] = -2  # Or some special ignored value
+                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+                continue
 
-    print("Step 6: Save output")
-    # output_file = "data/postprocessed/PointTransformerV3/32_17_pred_denoised_supsamp_connected.txt"
-    # np.savetxt(output_file, points)
+            sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
+                points, sphere_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
-    # Save cylinders to CSV
-    df = cylinder_tracker.export_to_dataframe()
-    csv_path = "data/postprocessed/PointTransformerV3/cylinders.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"✅ Cylinders saved to: {csv_path}")
+            progress_bar.n = num_points - unsegmented_points.size
+            progress_bar.refresh()
 
-    # Export cylinder mesh
-    cylinders_ply_path = "data/postprocessed/PointTransformerV3/cylinders_mesh.ply"
-    # Color cylinders by type (red for connection, green for follow)
-    cylinder_tracker.export_mesh_ply(cylinders_ply_path, resolution=10, color_by_type=True)
-    print(f"✅ Cylinders saved to: {cylinders_ply_path}")
+        print("Step 4: Merge close clusters")
+        clusters, segmentation_ids = final_merge_clusters(
+            clusters, points, cylinder_tracker, segmentation_ids, params
+        )
 
-    spheres_ply_path = "data/postprocessed/PointTransformerV3/spheres_mesh.ply"
-    # Color spheres by outer vs. non-outer (blue for outer, gray for non-outer)
-    export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=10, color_by_outer=True)
-    print(f"✅ Spheres saved to: {spheres_ply_path}")
+        print(f"{len(clusters)} clusters left")
+        roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
+        print(f"🌳 Number of root cylinders: {len(roots)}")
+        
+        print("Step 5: Corrections")
 
-if __name__ == "__main__":
-    import cProfile, pstats
+        # Correct cylinder radii in all clusters based on parent's radius
+        correct_cylinder_radii(cylinder_tracker, params)
 
-    profiler = cProfile.Profile()
-    profiler.enable()  # Start profiling
+        print("Step 6: Save output")
+        filename = os.path.splitext(os.path.basename(cloud_path))[0]
 
-    main()  # Run your main code
+        output_path_csv = os.path.join(outputDir, f"{filename}_supsamp.txt")
 
-    profiler.disable()  # Stop profiling
+        # Save cylinders to CSV
+        df = cylinder_tracker.export_to_dataframe()
+        output_path_csv = os.path.join(outputDir, f"{filename}_cylinders.csv")
+        df.to_csv(output_path_csv, index=False)
+        print(f"✅ Cylinders saved to: {output_path_csv}")
 
-    # Create a Stats object, sort by cumulative time, and print the top 10 entries
-    stats = pstats.Stats(profiler).sort_stats("cumulative")
-    # stats.print_stats(50)
+        # Export cylinder mesh
+        output_path_ply = os.path.join(outputDir, f"{filename}_cylinders.ply")
+        # Color cylinders by type (red for connection, green for follow)
+        cylinder_tracker.export_mesh_ply(output_path_ply, resolution=10, color_by_type=True)
+        print(f"✅ Cylinders saved to: {output_path_ply}")
+
+        # spheres_ply_path = "data/postprocessed/PointTransformerV3/spheres_mesh_34_38.ply"
+        # # Color spheres by outer vs. non-outer (blue for outer, gray for non-outer)
+        # export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=10, color_by_outer=True)
+        # print(f"✅ Spheres saved to: {spheres_ply_path}")
+
+# if __name__ == "__main__":
+#     import cProfile, pstats
+
+#     profiler = cProfile.Profile()
+#     profiler.enable()  # Start profiling
+
+#     main()  # Run your main code
+
+#     profiler.disable()  # Stop profiling
+
+#     # Create a Stats object, sort by cumulative time, and print the top 10 entries
+#     stats = pstats.Stats(profiler).sort_stats("cumulative")
+#     # stats.print_stats(50)
