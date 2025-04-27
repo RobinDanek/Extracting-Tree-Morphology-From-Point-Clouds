@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import torch
+import os
+import laspy
 import functools
 from scipy.optimize import curve_fit
 
@@ -174,3 +176,99 @@ def cuda_cast(func):
         return func(*new_args, **new_kwargs)
 
     return wrapper
+
+# Loading and writing
+
+def load_cloud(path):
+    try:
+        import laspy
+        HAS_LASPY = True
+    except ImportError:
+        HAS_LASPY = False
+        print("WARNING: laspy not found. LAZ file support disabled.")
+    """Loads a point cloud from npy, txt, or laz file."""
+    points = None
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".npy":
+            points = np.load(path)
+        elif ext == ".txt":
+            try:
+                points = np.loadtxt(path, delimiter=' ')
+            except ValueError:
+                points = np.loadtxt(path, delimiter=',')
+            except Exception as load_err: # Catch other potential loading errors
+                 print(f"ERROR loading TXT {path}: {load_err}")
+                 return None
+        elif ext in [".laz", ".las"]:
+            if HAS_LASPY:
+                with laspy.open(path) as f:
+                    points = np.vstack((f.x, f.y, f.z)).T
+            else:
+                print(f"ERROR: Cannot load {path}. laspy not installed.")
+                return None
+        else:
+            print(f"ERROR: Unsupported file format: {ext} for {path}")
+            return None
+
+        if points is not None and points.ndim == 2 and points.shape[1] >= 3:
+            return points[:, :3]
+        elif points is not None:
+             print(f"ERROR: Loaded data from {path} has unexpected shape: {points.shape}")
+             return None
+        else:
+             # Loading failed, error likely already printed
+             return None
+
+    except FileNotFoundError:
+        print(f"ERROR: File not found: {path}")
+        return None
+    except Exception as e:
+        print(f"ERROR: Failed to load point cloud from {path}: {e}")
+        return None
+
+def save_cloud(data, path, save_type="npy"):
+    try:
+        import laspy
+        HAS_LASPY = True
+    except ImportError:
+        HAS_LASPY = False
+        print("WARNING: laspy not found. LAZ file support disabled.")
+    """Saves a point cloud as npy, txt, or laz."""
+    if data is None or len(data) == 0:
+        print(f"Skipping saving to {path} as data is empty or None.")
+        return
+    try:
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Add extension if not present
+        expected_ext = "." + save_type
+        if not path.lower().endswith(expected_ext):
+             path += expected_ext
+
+        if save_type == "npy":
+            np.save(path, data)
+        elif save_type == "txt":
+            np.savetxt(path, data, fmt="%.6f")
+        elif save_type == "laz":
+            if HAS_LASPY:
+                header = laspy.LasHeader(point_format=3, version="1.4")
+                # Attempt to infer scale/offset if possible, otherwise use defaults
+                min_coords = np.min(data, axis=0)
+                header.scales = np.array([0.001, 0.001, 0.001]) # Adjust if needed
+                header.offsets = min_coords # A reasonable offset
+                las = laspy.LasData(header)
+                las.x = data[:, 0]
+                las.y = data[:, 1]
+                las.z = data[:, 2]
+                las.write(path)
+            else:
+                print(f"ERROR: Cannot save {path} as LAZ (laspy missing). Saving as TXT.")
+                np.savetxt(os.path.splitext(path)[0] + ".txt", data, fmt="%.6f")
+        else:
+            print(f"ERROR: Unsupported save type '{save_type}'. Saving as NPY.")
+            np.save(os.path.splitext(path)[0] + ".npy", data)
+        # print(f"Saved cloud to {path}") # Optional debug message
+    except Exception as e:
+        print(f"ERROR: Failed to save point cloud to {path} (type: {save_type}): {e}")

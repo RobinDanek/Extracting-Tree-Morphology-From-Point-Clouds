@@ -27,10 +27,10 @@ class TreeSet(Dataset):
 
         # Ensure json_paths is a list
         if isinstance(paths, str):
-            json_paths = [json_paths]
+            json_paths = [paths]
 
         if process_json:
-            for json_path in paths:
+            for json_path in json_paths:
                 with open(json_path, 'r') as f:
                     new_data = json.load(f)
 

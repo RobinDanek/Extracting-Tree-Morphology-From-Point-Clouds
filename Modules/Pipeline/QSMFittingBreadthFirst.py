@@ -1485,185 +1485,163 @@ def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth, 
 
 
 
-def fitQSM(cloud_list, outputDir):
-    print("Step 1: Loading the cloud")
-    # file_path = "data/postprocessed/TreeLearn/34_38_pred_denoised_supsamp_k10.txt"
-    # file_path = "data/postprocessed/TreeLearn/AEW42_GD_124_hTLS_supsamp_k10.txt"
+def fitQSM_BreadthFirst(
+    cloud_data: np.ndarray, # Takes numpy array
+    cloud_path: str, # Original path for naming
+    outputDir: str,
+    save_cyl_ply: bool = False,
+    save_sphere_ply: bool = False,
+    save_csv: bool = True,
+    verbose: bool = False,
+    device: torch.device = 'cpu'
+):
+    
+    if cloud_data is None or len(cloud_data) < 10: # Check for valid input data
+         print(f"  Skipping BreadthFirst QSM for {os.path.basename(cloud_path)}: Insufficient data points ({len(cloud_data) if cloud_data is not None else 0}).")
+         return
+    
+    base_filename = os.path.splitext(os.path.basename(cloud_path))[0]
+    if verbose: print(f"Starting BreadthFirst QSM for: {base_filename}")
 
-    # import laspy
-    # las = laspy.read( "data/postprocessed/TreeLearn/AEW42_GD_124_hTLS_supsamp_k10.txt" )
-    # points = np.vstack((las.x, las.y, las.z)).T
+    points = cloud_data # Use the passed numpy array
 
-    for cloud_path in cloud_list:
+    if verbose: print("Step 1: Loading the cloud")
 
-        try:
-            points = np.loadtxt(cloud_path)
-        except Exception:
-            pass
+    if verbose: print("Step 2: Init params and arrays")
+    num_points = len(points)
+    segmentation_ids = -np.ones(num_points, dtype=int)
+    unsegmented_points = np.arange(num_points)
 
-        try:
-            las = laspy.read( cloud_path )
-            points = np.vstack((las.x, las.y, las.z)).T
-        except (ImportError, laspy.errors.LaspyException):
-            pass
+    clusters = []
+    sphere_id = 0
+    cylinder_tracker = CylinderTracker()
 
-        print("Step 2: Init params and arrays")
-        num_points = len(points)
-        segmentation_ids = -np.ones(num_points, dtype=int)
-        unsegmented_points = np.arange(num_points)
+    params = {
+        'eps': np.radians(20), # 0.05
+        'min_samples': 5,
+        'sphere_factor': 2.0,
+        'radius_min': 0.15,
+        'radius_max': 0.4,
+        'min_growth_points': 10,
+        'min_points_threshold': 4,
+        'max_spread_growth': 1.2,
+        'min_spread_growth': 0.33,
+        'smallest_search_radius': 0.1,
+        'search_radius_step': 0.1,
+        'max_search_radius': 0.3,
+        'max_dist': 0.3,
+        'max_angle': 30,
+        'distance_type': 'center',
+        'sphere_radius': 0.15,
+        'sphere_thickness': 0.33,
+        'sphere_thickness_type': 'relative',
+        'clustering_algorithm': 'dbscan',
+        'merging_procedure': 'weighted',
+        'clustering_linkage': 'single',
+        'clustering_type': 'angular', # Or euclidian
+        'eps_cylinder': 0.1,
+        'segmentation_type': 'sphere',
+        'only_correct_connections': True,
+        'device': device,
+    }
 
-        clusters = []
-        sphere_id = 0
-        cylinder_tracker = CylinderTracker()
+    point_tree = cKDTree(points)
 
-        params = {
-            'eps': np.radians(5), # 0.05
-            'min_samples': 5,
-            'sphere_factor': 1.5,
-            'radius_min': 0.1,
-            'radius_max': 0.4,
-            'min_growth_points': 10,
-            'min_points_threshold': 4,
-            'max_spread_growth': 1.2,
-            'min_spread_growth': 0.33,
-            'smallest_search_radius': 0.1,
-            'search_radius_step': 0.1,
-            'max_search_radius': 0.3,
-            'max_dist': 0.3,
-            'max_angle': 30,
-            'distance_type': 'center',
-            'sphere_radius': 0.15,
-            'sphere_thickness': 0.33,
-            'sphere_thickness_type': 'relative',
-            'clustering_algorithm': 'dbscan',
-            'merging_procedure': 'weighted',
-            'clustering_linkage': 'single',
-            'clustering_type': 'angular', # Or euclidian
-            'eps_cylinder': 0.1,
-            'segmentation_type': 'sphere',
-            'only_correct_connections': True,
-            'device': get_device(GPU=True),
-        }
+    if verbose: print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
 
-        # params = {
-        #     'eps': np.radians(20), # 0.05
-        #     'min_samples': 5,
-        #     'sphere_factor': 2.0,
-        #     'radius_min': 0.15,
-        #     'radius_max': 0.4,
-        #     'min_growth_points': 10,
-        #     'min_points_threshold': 4,
-        #     'max_spread_growth': 1.05,
-        #     'min_spread_growth': 0.33,
-        #     'smallest_search_radius': 0.1,
-        #     'search_radius_step': 0.1,
-        #     'max_search_radius': 0.3,
-        #     'max_dist': 0.4,
-        #     'max_angle': 30,
-        #     'distance_type': 'center',
-        #     'sphere_radius': 0.15,
-        #     'sphere_thickness': 0.33,
-        #     'sphere_thickness_type': 'relative',
-        #     'clustering_algorithm': 'dbscan',
-        #     'merging_procedure': 'weighted',
-        #     'clustering_linkage': 'single',
-        #     'clustering_type': 'angular', # Or euclidian
-        #     'eps_cylinder': 0.1,
-        #     'segmentation_type': 'cylinder',
-        #     'only_correct_connections': True,
-        #     'device': get_device(GPU=True),
-        # }
+    # Initialize tqdm bar for total points
+    if verbose: progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
 
-        # Current best
-        # params = {
-        #     'eps': 0.05,
-        #     'min_samples': 2,
-        #     'sphere_factor': 2.0,
-        #     'radius_min': 0.15,
-        #     'radius_max': 0.4,
-        #     'min_growth_points': 10,
-        #     'min_points_threshold': 4,
-        #     'max_spread_growth': 1.2,
-        #     'min_spread_growth': 0.0,
-        #     'smallest_search_radius': 0.1,
-        #     'search_radius_step': 0.1,
-        #     'max_search_radius': 0.3,
-        #     'max_dist': 0.4,
-        #     'max_angle': 60,
-        #     'distance_type': 'center',
-        #     'sphere_radius': 0.15,
-        #     'sphere_thickness': 0.33,
-        #     'sphere_thickness_type': 'relative',
-        #     'clustering_algorithm': 'agglomerative',
-        #     'clustering_linkage': 'single'
-        # }
+    initial_sphere = initialize_first_sphere(points, 0.3, params['sphere_thickness'])
+    sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
+        points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
-        point_tree = cKDTree(points)
+    if verbose: progress_bar.n = num_points - unsegmented_points.size
+    if verbose: progress_bar.refresh()
 
-        print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
+    while unsegmented_points.size > 0:
 
-        # Initialize tqdm bar for total points
-        progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
+        new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
+        new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
 
-        initial_sphere = initialize_first_sphere(points, 0.3, params['sphere_thickness'])
+        if new_seed_sphere.contained_points.size < params['min_growth_points']:
+            # Mark these points so they won’t be reused
+            segmentation_ids[new_seed_sphere.contained_points] = -2  # Or some special ignored value
+            unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+            continue
+
         sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
-            points, sphere_id, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
+            points, sphere_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
 
-        progress_bar.n = num_points - unsegmented_points.size
-        progress_bar.refresh()
+        if verbose: progress_bar.n = num_points - unsegmented_points.size
+        if verbose: progress_bar.refresh()
 
-        while unsegmented_points.size > 0:
+    if verbose: progress_bar.close()
+    if verbose: print(f"\nFinished finding/growing clusters. Total clusters found: {len(clusters)}")
+    
+    # --- Final Steps (Merging, Correction, Export) ---
+    if clusters: # Only merge if there are clusters
+        if verbose: print("Step 4: Merge close clusters")
+        try:
+                clusters, segmentation_ids = final_merge_clusters(
+                    clusters, points, cylinder_tracker, segmentation_ids, params
+                )
+                if verbose: print(f"{len(clusters)} clusters remaining after merging.")
+        except Exception as e:
+                print(f"Error during final merge: {e}. Skipping merge.")
+                import traceback
+                traceback.print_exc()
 
-            new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree)
-            new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+    else:
+            if verbose: print("Step 4: No clusters found to merge.")
 
-            if new_seed_sphere.contained_points.size < params['min_growth_points']:
-                # Mark these points so they won’t be reused
-                segmentation_ids[new_seed_sphere.contained_points] = -2  # Or some special ignored value
-                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-                continue
-
-            sphere_id, segmentation_ids, unsegmented_points = grow_cluster(
-                points, sphere_id, new_seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree)
-
-            progress_bar.n = num_points - unsegmented_points.size
-            progress_bar.refresh()
-
-        print("Step 4: Merge close clusters")
-        clusters, segmentation_ids = final_merge_clusters(
-            clusters, points, cylinder_tracker, segmentation_ids, params
-        )
-
-        print(f"{len(clusters)} clusters left")
-        roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
-        print(f"🌳 Number of root cylinders: {len(roots)}")
+    if cylinder_tracker.cylinders: # Only correct if cylinders exist
+        if verbose: print("Step 5: Correct cylinder radii")
+        try:
+                correct_cylinder_radii(cylinder_tracker, params)
+                if verbose: print("Radii corrected.")
+        except Exception as e:
+                print(f"Error during radius correction: {e}. Skipping correction.")
+                import traceback
+                traceback.print_exc()
         
-        print("Step 5: Corrections")
+        roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
+        if verbose: print(f"Number of root cylinders after potential merge/correction: {len(roots)}")
+    else:
+        if verbose: print("Step 5: No cylinders found to correct.")
 
-        # Correct cylinder radii in all clusters based on parent's radius
-        correct_cylinder_radii(cylinder_tracker, params)
+    if verbose: print("  Step 6: Save QSM output")
+    # Derive output name - use the base filename from the original cloud path
+    qsm_output_base = os.path.join(outputDir, f"{base_filename}_qsm_breadth") # Add type to name
 
-        print("Step 6: Save output")
-        filename = os.path.splitext(os.path.basename(cloud_path))[0]
+    # Saving logic (using passed flags)
+    if save_csv:
+        try:
+            df = cylinder_tracker.export_to_dataframe()
+            output_path_csv = f"{qsm_output_base}_cylinders.csv"
+            os.makedirs(os.path.dirname(output_path_csv), exist_ok=True)
+            df.to_csv(output_path_csv, index=False)
+            if verbose: print(f"    Cylinders saved to: {output_path_csv}")
+        except Exception as e:
+             print(f"    ERROR saving cylinder CSV: {e}")
 
-        output_path_csv = os.path.join(outputDir, f"{filename}_supsamp.txt")
+    if save_cyl_ply:
+        try:
+            output_path_ply = f"{qsm_output_base}_cylinders.ply"
+            os.makedirs(os.path.dirname(output_path_ply), exist_ok=True)
+            cylinder_tracker.export_mesh_ply(output_path_ply, resolution=10, color_by_type=True)
+            if verbose: print(f"    Cylinder mesh saved to: {output_path_ply}")
+        except Exception as e:
+             print(f"    ERROR saving cylinder PLY: {e}")
 
-        # Save cylinders to CSV
-        df = cylinder_tracker.export_to_dataframe()
-        output_path_csv = os.path.join(outputDir, f"{filename}_cylinders.csv")
-        df.to_csv(output_path_csv, index=False)
-        print(f"✅ Cylinders saved to: {output_path_csv}")
-
-        # Export cylinder mesh
-        output_path_ply = os.path.join(outputDir, f"{filename}_cylinders.ply")
-        # Color cylinders by type (red for connection, green for follow)
-        cylinder_tracker.export_mesh_ply(output_path_ply, resolution=10, color_by_type=True)
-        print(f"✅ Cylinders saved to: {output_path_ply}")
-
-        # spheres_ply_path = "data/postprocessed/PointTransformerV3/spheres_mesh_34_38.ply"
-        # # Color spheres by outer vs. non-outer (blue for outer, gray for non-outer)
-        # export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=10, color_by_outer=True)
-        # print(f"✅ Spheres saved to: {spheres_ply_path}")
+    if save_sphere_ply:
+        try:
+            spheres_ply_path = f"{qsm_output_base}_spheres.ply"
+            os.makedirs(os.path.dirname(spheres_ply_path), exist_ok=True)
+            export_clusters_spheres_ply(clusters, filename=spheres_ply_path, resolution=10, color_by_outer=True)
+            if verbose: print(f"    Sphere mesh saved to: {spheres_ply_path}")
+        except Exception as e:
+             print(f"    ERROR saving sphere PLY: {e}")
 
 # if __name__ == "__main__":
 #     import cProfile, pstats
