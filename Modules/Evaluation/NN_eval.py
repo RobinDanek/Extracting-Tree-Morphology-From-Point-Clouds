@@ -67,6 +67,8 @@ def calculate_nnds_from_predictions(model_type):
 
         nnd_pred.extend( nnd_pred_tree.tolist() )
 
+    print("Finished NND calculations for loaded data!")
+
     return nnd_orig, nnd_pred
 
 
@@ -130,18 +132,23 @@ def makePredictionsRasterized(model_dict):
     _, data_plot_6 = get_treesets_plot_split(data_root, test_plot=6, noise_distance=0.1)
     _, data_plot_8 = get_treesets_plot_split(data_root, test_plot=8, noise_distance=0.1)
 
-    raster_plot_3_set = RasterizedTreeSet_Hierarchical(
-                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_3.json'), noise_distance=0.1, minibatch_size=60
-                    )
-    raster_plot_4_set = RasterizedTreeSet_Hierarchical(
-                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_4.json'), noise_distance=0.1, minibatch_size=60
-                    )
-    raster_plot_6_set = RasterizedTreeSet_Hierarchical(
-                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_6.json'), noise_distance=0.1, minibatch_size=60
-                    )
-    raster_plot_8_set = RasterizedTreeSet_Hierarchical(
-                        os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_8.json'), noise_distance=0.1, minibatch_size=60
-                    )
+    # raster_plot_3_set = RasterizedTreeSet_Hierarchical(
+    #                     os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_3.json'), noise_distance=0.1, minibatch_size=60
+    #                 )
+    # raster_plot_4_set = RasterizedTreeSet_Hierarchical(
+    #                     os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_4.json'), noise_distance=0.1, minibatch_size=60
+    #                 )
+    # raster_plot_6_set = RasterizedTreeSet_Hierarchical(
+    #                     os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_6.json'), noise_distance=0.1, minibatch_size=60
+    #                 )
+    # raster_plot_8_set = RasterizedTreeSet_Hierarchical(
+    #                     os.path.join(data_root, 'rasterized_R1.0_S1.0', 'rasters_qsm_set_8.json'), noise_distance=0.1, minibatch_size=60
+    #                 )
+
+    _, raster_plot_3_set = get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot=3, raster_size=1.0, stride=1.0, minibatch_size=60 )
+    _, raster_plot_4_set = get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot=4, raster_size=1.0, stride=1.0, minibatch_size=60 )
+    _, raster_plot_6_set = get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot=6, raster_size=1.0, stride=1.0, minibatch_size=60)
+    _, raster_plot_8_set = get_rasterized_treesets_hierarchical_plot_split( data_root, test_plot=8, raster_size=1.0, stride=1.0, minibatch_size=60 )
 
     plot_3_loader = get_dataloader(data_plot_3, 1, num_workers=0, training=False, collate_fn=data_plot_3.collate_fn_voxel)
     plot_4_loader = get_dataloader(data_plot_4, 1, num_workers=0, training=False, collate_fn=data_plot_4.collate_fn_voxel)
@@ -175,13 +182,13 @@ def makePredictionsRasterized(model_dict):
             # Look for a matching rasterized tree.
             matching_raster = None
             for raster_tree in raster_trees:
-                print(int(raster_tree["cloud_length"]))
+                #print(int(raster_tree["cloud_length"]))
                 if int(raster_tree["cloud_length"]) == tree_size:
                     matching_raster = raster_tree
                     break
                     
             if matching_raster is None:
-                print(f"No matching rasterized tree found for tree of size {tree_size}. Skipping inference.")
+                #print(f"No matching rasterized tree found for tree of size {tree_size}. Skipping inference.")
                 continue
 
             # Compute nearest neighbor distances for the original cloud.
@@ -295,15 +302,15 @@ def plot_nn_distances(nnd_orig, nnd_pred, model_type, tree_plots=None, plot_save
     from scipy.optimize import curve_fit
 
     # # === Font size settings ===
-    # plt.rcParams.update({
-    #     'font.size': 14,            # Base font size
-    #     'axes.titlesize': 18,       # Title
-    #     'axes.labelsize': 16,       # Axis labels
-    #     'xtick.labelsize': 12,      # Tick labels
-    #     'ytick.labelsize': 12,
-    #     'legend.fontsize': 14,      # Legend
-    #     'figure.titlesize': 20      # Figure title (if used)
-    # })
+    plt.rcParams.update({
+        'font.size': 14,            # Base font size
+        'axes.titlesize': 18,       # Title
+        'axes.labelsize': 16,       # Axis labels
+        'xtick.labelsize': 14,      # Tick labels
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14,      # Legend
+        'figure.titlesize': 20      # Figure title (if used)
+    })
 
     def custom_scale(val):
         val = np.asarray(val)
