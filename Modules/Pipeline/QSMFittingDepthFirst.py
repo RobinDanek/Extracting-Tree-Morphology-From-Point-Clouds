@@ -1223,7 +1223,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
     # --- Main Loop using Priority Queue (Replaces BFS while True loop) ---
     while pq:
-        print(len(unsegmented_points))
         # Get the sphere with the highest priority (largest spread)
         priority, unique_id, current_sphere = heapq.heappop(pq)
 
@@ -1241,9 +1240,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
         else:
              # In cylinder mode, unsegmented_points array holds the current state
              available_points_for_candidates = unsegmented_points
-
-        print(parent_priority_score)
-        print(current_sphere.radius)
 
         # Assign points *just for candidate finding* - This is implicit in original,
         # but good practice here to ensure candidates are found based on current points.
@@ -1307,8 +1303,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
              labels = db.labels_; unique_labels = np.unique(labels)
         else:
              labels = np.arange(len(candidate_info)); unique_labels = labels
-
-        print(len(labels), unique_labels)
 
         # --- Process each candidate/merged group ---
         for label in unique_labels:

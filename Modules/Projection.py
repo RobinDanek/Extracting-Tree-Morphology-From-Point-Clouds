@@ -56,7 +56,11 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
     # Step 3.2: Normalize the rejection vector (only for non-perpendicular cases)
     norm_rejected = torch.norm(rejected_vectors, dim=2, keepdim=True)  # Shape: (N, M, 1)
     new_axis_unit = torch.zeros_like(rejected_vectors)
-    new_axis_unit = rejected_vectors / norm_rejected
+    
+    eps = 1e-8
+    safe_norm_rejected = norm_rejected.clone()
+    safe_norm_rejected[safe_norm_rejected < eps] = eps
+    new_axis_unit = rejected_vectors / safe_norm_rejected
 
     # Step 3.3: Scale to 2 × radius and anchor it at the clamped projection point (only for non-perpendicular cases)
     new_axis_scaled = new_axis_unit * (2 * radius.view(1, -1, 1))  # Shape: (N, M, 3)
@@ -74,7 +78,7 @@ def closest_cylinder_cuda_batch(points, start, radius, axis_length, axis_unit, I
     projection_on_new_axis = new_axis_start + projection_length_clamped * new_axis_unit
 
     # **Adjust distances for perpendicular cases**
-    surface_projection_points = projection_points_clamped + rejected_vectors / norm_rejected * radius.view(1, -1, 1)
+    surface_projection_points = projection_points_clamped + rejected_vectors / safe_norm_rejected * radius.view(1, -1, 1)
 
     # Combine surface and new axis projections before computing distances
     final_projection_points = torch.where(perpendicular_mask[..., None], surface_projection_points, projection_on_new_axis)
@@ -134,44 +138,115 @@ def generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=None,
 
     return output_data
 
-def project_clouds( cloudList, cylinderList, labelDir, batch_size=1024, use_features=False, denoised=False ):
-
+def project_clouds(cloudList, cylinderList, labelDir, batch_size=1024, use_features=False, denoised=False):
     device = get_device()
 
-    def get_prefix(path):
-        parts = os.path.basename(path).split('.')[0].split('_')
-        return int(parts[0]), int(parts[1])  # Convert to integers for proper numerical sorting
-    
+    # Set correct suffix used in QSM filenames
+    if denoised:
+        output_suffix = "_labeled_pred_denoised_projected.npy"
+    else:
+        output_suffix = "_labeled_pred_projected.npy"
 
-    cloudList.sort(key=get_prefix)
-    cylinderList.sort(key=get_prefix)
+    # === Extract stem (e.g., "42_31") from any filename ===
+    def get_stem(path):
+        name = os.path.splitext(os.path.basename(path))[0]  # Remove extension
+        parts = name.split('_')
+        return f"{parts[0]}_{parts[1]}"  # Use only the first two tokens
+
+    # === Build a map from cloud stem to QSM path ===
+    def build_qsm_map(cylinderList):
+        qsm_map = {}
+        for path in cylinderList:
+            stem = get_stem(path)
+            qsm_map[stem] = path
+
+        return qsm_map
+
+    qsm_map = build_qsm_map(cylinderList)
+    # print(qsm_map)
 
     print("\nLabeling clouds...")
-    mb = master_bar( range(len(cloudList)) )
-    for i in mb:
-        # load the data
-        cloud = np.load( cloudList[i] )
-        cylinders = pd.read_csv( cylinderList[i], header=0 )
-        cylinders.columns = cylinders.columns.str.strip() # Clean whitespaces in column names 
+    mb = master_bar(cloudList)
+    for cloud_path in mb:
+        stem = get_stem(cloud_path)
 
-        # Get the labeled data
-        output_data = generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=mb, batch_size=batch_size)
+        if stem not in qsm_map:
+            print(f"[⚠️ WARNING] No matching QSM found for cloud {stem}")
+            continue
 
-        # Add features to the labeled cloud
+        qsm_path = qsm_map[stem]
+
+        # print(f"[✓] Projecting cloud: {cloud_path}  ←→  QSM: {qsm_path}")
+
+        # Load data
+        cloud = np.load(cloud_path)
+        cylinders = pd.read_csv(qsm_path, header=0)
+        cylinders.columns = cylinders.columns.str.strip()
+
+        # Run GPU projection
+        output_data = generate_offset_cloud_cuda_batched(
+            cloud, cylinders, device, masterBar=mb, batch_size=batch_size
+        )
+
+        # Optionally add dummy or real features
         if use_features:
-            output_data = add_features( output_data, use_densities=False, use_curvatures=False, use_distances=False, use_verticalities=False )
-        else: # Use dummy features for compatibility
-            output_data = np.concatenate( [output_data, np.ones((len(output_data), 4), dtype=int)], axis=1 )
-
-        # Save the output
-        fileName = os.path.basename( cloudList[i] ).split('.')[0]
-
-        if denoised:
-            file_ending = "_pred_denoised_projected.npy"
+            output_data = add_features(
+                output_data,
+                use_densities=False,
+                use_curvatures=False,
+                use_distances=False,
+                use_verticalities=False,
+            )
         else:
-            file_ending = "_pred_projected.npy"
-        
-        savePath = os.path.join( labelDir, fileName+file_ending)
-        np.save( savePath, output_data )
+            output_data = np.concatenate(
+                [output_data, np.ones((len(output_data), 4), dtype=int)], axis=1
+            )
 
-    print("Finished labeling and saving!")
+        # Save output
+        output_filename = stem + output_suffix
+        save_path = os.path.join(labelDir, output_filename)
+        np.save(save_path, output_data)
+
+    print("\n✅ Finished labeling and saving!")
+
+# def project_clouds( cloudList, cylinderList, labelDir, batch_size=1024, use_features=False, denoised=False ):
+
+#     device = get_device()
+
+#     def get_prefix(path):
+#         parts = os.path.basename(path).split('.')[0].split('_')
+#         return int(parts[0]), int(parts[1])  # Convert to integers for proper numerical sorting
+    
+
+#     cloudList.sort(key=get_prefix)
+#     cylinderList.sort(key=get_prefix)
+
+#     print("\nLabeling clouds...")
+#     mb = master_bar( range(len(cloudList)) )
+#     for i in mb:
+#         # load the data
+#         cloud = np.load( cloudList[i] )
+#         cylinders = pd.read_csv( cylinderList[i], header=0 )
+#         cylinders.columns = cylinders.columns.str.strip() # Clean whitespaces in column names 
+
+#         # Get the labeled data
+#         output_data = generate_offset_cloud_cuda_batched(cloud, cylinders, device, masterBar=mb, batch_size=batch_size)
+
+#         # Add features to the labeled cloud
+#         if use_features:
+#             output_data = add_features( output_data, use_densities=False, use_curvatures=False, use_distances=False, use_verticalities=False )
+#         else: # Use dummy features for compatibility
+#             output_data = np.concatenate( [output_data, np.ones((len(output_data), 4), dtype=int)], axis=1 )
+
+#         # Save the output
+#         fileName = os.path.basename( cloudList[i] ).split('.')[0]
+
+#         if denoised:
+#             file_ending = "_pred_denoised_projected.npy"
+#         else:
+#             file_ending = "_pred_projected.npy"
+        
+#         savePath = os.path.join( labelDir, fileName+file_ending)
+#         np.save( savePath, output_data )
+
+#     print("Finished labeling and saving!")
