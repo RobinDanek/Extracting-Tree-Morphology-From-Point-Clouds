@@ -10,6 +10,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="data/pipeline/output", help="Path to the output directory.")
     parser.add_argument("--qsm_type", type=str, default="depth", choices=["depth", "breadth"], help="Type of QSM clustering.")
     parser.add_argument("--cloud_save_type", type=str, default="npy", choices=["npy", "txt", "laz", "las"], help="Format for saving intermediate clouds.")
+    parser.add_argument("--model_type", type=str, default="treelearn", choices=["treelearn", "pointnet2", "pointtransformerv3", "no_model"], help="Type of model")
     # --- Boolean Flags (Defaulting to True) ---
     # For these, provide a '--no-<feature>' flag to turn them OFF
     parser.add_argument('--predict_offset', action='store_true', default=True, help="Enable offset prediction (cloud sharpening).")
@@ -44,6 +45,7 @@ if __name__ == "__main__":
     run_pipeline( 
         input_dir = args.input_dir, 
         output_dir= args.output_dir, 
+        model_type=args.model_type,
         predict_offset = args.predict_offset,
         denoise = args.denoise,
         super_sampling= args.super_sampling,

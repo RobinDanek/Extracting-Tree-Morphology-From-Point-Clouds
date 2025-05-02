@@ -429,7 +429,7 @@ def plot_nn_distances(nnd_orig, nnd_pred, model_type, tree_plots=None, plot_save
     plt.xlabel('Original NN Distance (custom scaled)')
     plt.ylabel('Transformed NN Distance (custom scaled)')
     if model_type=="treelearn":
-        plt.title('NND Comparison TreeLearn')
+        plt.title('NND Comparison Sparse U-Net')
     if model_type=="pointtransformerv3":
         plt.title('NND Comparison PointTransformer V3')
     if model_type=="pointnet2":

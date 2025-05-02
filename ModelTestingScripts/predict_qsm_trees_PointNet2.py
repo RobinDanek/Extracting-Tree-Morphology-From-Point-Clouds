@@ -113,7 +113,7 @@ def makePredictions(offset_model, noise_model):
             executed_cloud = executed_coords[not_noise_mask]
 
             # Save both arrays.
-            np.savetxt(pred_full_file_path, pred_full_array)
+            # np.savetxt(pred_full_file_path, pred_full_array)
             np.savetxt(pred_denoised_file_path, executed_cloud)
             np.savetxt(pred_file_path, executed_coords)
 

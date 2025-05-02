@@ -28,6 +28,7 @@ def rasterize_clouds(data_paths, json_path, raster_size, stride, store_metadata)
     num_rasters = 0
     raster_metadata = {}
 
+    #for cloud_path in progress_bar(data_paths, parent=None):
     for cloud_path in progress_bar(data_paths, parent=None):
         raster_id = 0
         file_name = os.path.splitext(os.path.basename( cloud_path ))[0]

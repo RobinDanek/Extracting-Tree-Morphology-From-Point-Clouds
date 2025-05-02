@@ -149,7 +149,7 @@ class RasterizedTreeSet_Flattened(Dataset):
 
 
 class RasterizedTreeSet_Hierarchical(Dataset):
-    def __init__(self, json_paths, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20, single_sample=False):
+    def __init__(self, paths, training=True, logger=None, data_augmentations=None, noise_distance=0.05, minibatch_size=20, single_sample=False):
         """
         Args:
             json_paths (str) or list(str): Path(s) to the JSON file(s) with tree and raster metadata.
@@ -161,10 +161,10 @@ class RasterizedTreeSet_Hierarchical(Dataset):
         self.data = {}
 
         # Ensure json_paths is a list
-        if isinstance(json_paths, str):
-            json_paths = [json_paths]
+        if isinstance(paths, str):
+            paths = [paths]
 
-        for json_path in json_paths:
+        for json_path in paths:
             with open(json_path, 'r') as f:
                 new_data = json.load(f)
 
@@ -200,9 +200,16 @@ class RasterizedTreeSet_Hierarchical(Dataset):
     def __getitem__(self, idx):
         # Retrieve tree-level metadata from JSON
         tree_info = self.data[self.tree_keys[idx]]
-        
+
         # Load the full cloud for the tree (if needed for aggregation later)
         data = np.load(tree_info["path"])
+
+        if data.shape[1] == 3: # e.g. plain XYZ → 3 columns
+            pad_cols = 8
+            data = np.hstack( # append zero‑columns
+                (data, np.zeros((data.shape[0], pad_cols), dtype=data.dtype))
+            )
+
         points, offsets, features = (
             torch.from_numpy(data[:, :3]).float(),
             torch.from_numpy(data[:, 3:6]).float(),

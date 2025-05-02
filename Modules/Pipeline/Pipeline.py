@@ -6,21 +6,27 @@ import time # For basic profiling/debugging if needed
 from .QSMFittingBreadthFirst import fitQSM_BreadthFirst
 from .QSMFittingDepthFirst import fitQSM_DepthFirst
 from .SuperSampling import superSample
-from .TreeLearnPredicting import makePredictions
+from .ModelPredicting import makePredictionsSingle, makePredictionsRasterized
 from Modules.Evaluation.ModelLoaders import load_model
 from Modules.Utils import get_device, load_cloud, save_cloud
 
-def load_models(offset_model_name, noise_model_name, predict_offset, denoise, device):
+model_dirs = {
+    'treelearn': [os.path.join('ModelSaves', 'TreeLearn', "TreeLearn_V0.02_U3_N0.1_O_FNH_CV"), os.path.join('ModelSaves', 'TreeLearn', "TreeLearn_V0.02_U3_N0.05_N_FNH_CV")],
+    'pointnet2': [os.path.join('ModelSaves', 'PointNet2', "pointnet2_R1.0_S1.0_N0.1_D5_O_FHN_CV"), os.path.join('ModelSaves', 'PointNet2', "pointnet2_R1.0_S1.0_N0.05_D5_N_FHN_CV")],
+    'pointtransformerv3': [os.path.join('ModelSaves', 'PointTransformerV3', "PointTransformerV3_V0.02_N0.1_O_FNH_CV"), os.path.join('ModelSaves', 'PointTransformerV3', "PointTransformerV3_V0.02_N0.05_N_FNH_CV")]
+}
+
+def load_models( model_type, predict_offset, denoise, device):
     loaded_offset_model = None
     loaded_noise_model = None
+
+    offset_model_dir, noise_model_dir = model_dirs[model_type]
 
     try:
         if predict_offset or denoise:
              print("Loading models...")
-             offset_model_dir = os.path.join('ModelSaves', 'TreeLearn', offset_model_name) if predict_offset and offset_model_name else None
-             noise_model_dir = os.path.join('ModelSaves', 'TreeLearn', noise_model_name) if denoise and noise_model_name else None
 
-             model_dict = load_model(model_type="treelearn", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
+             model_dict = load_model(model_type=model_type, offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
 
              if predict_offset and offset_model_dir:
                  loaded_offset_model = model_dict.get("O_P3") # Adjust key if needed
@@ -45,8 +51,7 @@ def run_pipeline(
         input_dir, output_dir,
         predict_offset=True, # Renamed from cloud_sharpening
         denoise=True,
-        offset_model_name="TreeLearn_V0.02_U3_N0.1_O_FNH_CV",
-        noise_model_name="TreeLearn_V0.02_U3_N0.05_N_FNH_CV",
+        model_type="treelearn",
         super_sampling=True,
         ss_k=10, ss_iterations=5, ss_min_height=0.0, ss_use_only_original=True,
         qsm_fitting=True,
@@ -65,8 +70,7 @@ def run_pipeline(
     print(f"Input Dir: {input_dir}")
     print(f"Output Dir: {output_dir}")
     print(f"--- Options ---")
-    print(f"Predict Offset: {predict_offset} (Model: {offset_model_name if predict_offset else 'N/A'})")
-    print(f"Denoise: {denoise} (Model: {noise_model_name if denoise else 'N/A'})")
+    print(f"Predict Offset: {predict_offset}, Denoise: {denoise}. (Model: {model_type})")
     print(f"Super Sampling: {super_sampling} (k={ss_k}, iter={ss_iterations}, min_h={ss_min_height}, only_orig={ss_use_only_original})")
     print(f"QSM Fitting: {qsm_fitting} (Type: {qsm_type if qsm_fitting else 'N/A'}, Verbose: {qsm_verbose})")
     print(f"--- Saving ---")
@@ -79,9 +83,12 @@ def run_pipeline(
     print("-" * 20)
 
     os.makedirs(output_dir, exist_ok=True)
-    device = get_device(GPU=True)
 
-    loaded_offset_model, loaded_noise_model = load_models(offset_model_name, noise_model_name, predict_offset, denoise, device)
+    # Make the output directory model specific
+    output_dir = os.path.join(output_dir, model_type)
+    os.makedirs(output_dir, exist_ok=True)
+
+    device = get_device(GPU=True)
 
     # --- List Input Clouds ---
     try:
@@ -115,17 +122,35 @@ def run_pipeline(
             # This step now handles loading internally.
             # It returns the processed data, or original loaded data if no models applied, or None on error.
             if predict_offset or denoise:
-                 print("  Running Prediction/Denoising Step...")
-                 current_cloud_data = makePredictions(
-                     cloud_path=cloud_path,
-                     outputDir=output_dir, # Pass output dir for optional saving
-                     model_offset=loaded_offset_model,
-                     model_noise=loaded_noise_model,
-                     predict_offset=predict_offset,
-                     denoise=denoise,
-                     save_output=save_model_predictions, # Pass save flag
-                     cloud_save_type=cloud_save_type    # Pass save format
-                 )
+                print("  Running Prediction/Denoising Step...")
+                if model_type=="treelearn" or model_type=="pointtransformerv3":
+                    loaded_offset_model, loaded_noise_model = load_models(model_type, predict_offset, denoise, device)
+                    current_cloud_data = makePredictionsSingle(
+                        cloud_path=cloud_path,
+                        outputDir=output_dir, # Pass output dir for optional saving
+                        model_offset=loaded_offset_model,
+                        model_noise=loaded_noise_model,
+                        predict_offset=predict_offset,
+                        denoise=denoise,
+                        save_output=save_model_predictions, # Pass save flag
+                        cloud_save_type=cloud_save_type    # Pass save format
+                    )
+                elif model_type=="pointnet2":
+                    loaded_offset_model, loaded_noise_model = load_models(model_type, predict_offset, denoise, device)
+                    current_cloud_data = makePredictionsRasterized(
+                        cloud_path=cloud_path,
+                        outputDir=output_dir, # Pass output dir for optional saving
+                        model_offset=loaded_offset_model,
+                        model_noise=loaded_noise_model,
+                        predict_offset=predict_offset,
+                        denoise=denoise,
+                        save_output=save_model_predictions, # Pass save flag
+                        cloud_save_type=cloud_save_type    # Pass save format
+                    )
+                elif model_type=="no_model":
+                    current_cloud_data = load_cloud( cloud_path )
+                else:
+                    raise Exception("specify either treelearn, pointtransformerv3 or pointnet2,  or no_model")
             else:
                  # If prediction/denoising is off, load the cloud manually for subsequent steps
                  print("  Skipping Prediction/Denoising Step. Loading cloud directly...")

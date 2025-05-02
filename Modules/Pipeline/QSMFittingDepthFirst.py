@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import open3d as o3d
-import pyransac3d as pyrsc
 import os
 from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from collections import defaultdict, Counter
