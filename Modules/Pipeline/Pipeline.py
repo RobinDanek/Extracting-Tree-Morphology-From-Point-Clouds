@@ -163,20 +163,23 @@ def run_pipeline(
             # STEP 2: Super Sampling
             if super_sampling:
                 print("  Running Super Sampling Step...")
-                current_cloud_data = superSample(
-                    cloud_data=current_cloud_data,
-                    cloud_path=cloud_path, # For naming output file if saved
-                    outputDir=output_dir, # For saving output
-                    k=ss_k,
-                    iterations=ss_iterations,
-                    min_height=ss_min_height,
-                    use_only_original=ss_use_only_original,
-                    save_output=save_super_sampling, # Pass save flag
-                    cloud_save_type=cloud_save_type  # Pass save format
-                )
-                if current_cloud_data is None:
-                    print(f"  Skipping remaining steps for {base_filename} due to error in super sampling.")
-                    continue
+                if len(current_cloud_data) > 1500000:
+                    print("  Skipping super sampling due to large point density")
+                else:
+                    current_cloud_data = superSample(
+                        cloud_data=current_cloud_data,
+                        cloud_path=cloud_path, # For naming output file if saved
+                        outputDir=output_dir, # For saving output
+                        k=ss_k,
+                        iterations=ss_iterations,
+                        min_height=ss_min_height,
+                        use_only_original=ss_use_only_original,
+                        save_output=save_super_sampling, # Pass save flag
+                        cloud_save_type=cloud_save_type  # Pass save format
+                    )
+                    if current_cloud_data is None:
+                        print(f"  Skipping remaining steps for {base_filename} due to error in super sampling.")
+                        continue
             else:
                 print("  Skipping Super Sampling Step.")
 
