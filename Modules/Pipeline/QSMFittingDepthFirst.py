@@ -90,7 +90,7 @@ class Sphere:
         self.contained_points = subset_indices[contained_mask]
         self.outer_points = subset_indices[outer_mask]
 
-    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5, algorithm='agglomerative', linkage='average', clustering_type='angular'):
+    def get_candidate_centers_and_spreads(self, points, eps=0.5, min_samples=5, algorithm='agglomerative', linkage='average', clustering_type='angular', ransac_iterations=20, ransac_subset_percentage=0.75):
         """
         Cluster the outer points using DBSCAN or Agglomerative Clustering to detect candidate centers.
 
@@ -173,67 +173,167 @@ class Sphere:
         # ransac_min_points = 5 # Min points needed for pyransac3d fit
         
         for label in valid_labels:
-            # Get all points in the current cluster.
+
             cluster_coords = candidate_coords[labels == label]
-            
-            # Compute the centroid of the cluster in 3D.
-            centroid_3d = np.mean(cluster_coords, axis=0)
+            n_cluster_points = cluster_coords.shape[0]
 
-            # Compute the vector from the sphere center (self.center) to the centroid
-            v = centroid_3d - self.center
-            n = v / np.linalg.norm(v)  # Normal of the plane
-
-            # Choose an arbitrary vector that is not parallel to n.
-            arbitrary = np.array([0, 0, 1])
-            if np.abs(np.dot(n, arbitrary)) > 0.99:
-                arbitrary = np.array([0, 1, 0])
-                
-            # Create two orthonormal basis vectors for the plane:
-            basis1 = arbitrary - np.dot(arbitrary, n) * n
-            basis1 = basis1 / np.linalg.norm(basis1)
-            basis2 = np.cross(n, basis1)
-
-            # Compute offsets of all points from the cluster centroid
-            offsets = cluster_coords - centroid_3d  # Shape (N, 3)
-
-            # Compute the dot product of each offset with the plane normal (produces an (N,) array)
-            proj_comp = offsets @ n  # Equivalent to np.dot(offsets, n)
-
-            # Remove the component in the normal direction to get the projection vector for every point
-            proj_vec = offsets - np.outer(proj_comp, n)  # Shape (N, 3)
-
-            # Compute 2D coordinates by projecting onto basis1 and basis2
-            x_coords = proj_vec @ basis1  # Shape (N,)
-            y_coords = proj_vec @ basis2  # Shape (N,)
-
-            # Stack the 1D coordinate arrays column-wise to form an (N, 2) array for 2D points
-            projected = np.column_stack((x_coords, y_coords))
-            
-            # # Fit a best-fit plane using PCA (SVD) on the cluster coordinates.
-            # centered_coords = cluster_coords - centroid_3d
-            # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
-            # # The first two principal components span the best-fit plane.
-            # plane_basis = Vt[:2].T  # shape (3,2)
-            
-            # # Project the cluster points onto the plane.
-            # projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
-
-            # New: Fit circle in 2D
-            center_2d, radius = fit_circle_2d(projected)
-
-            # # Convert 2D circle center back to 3D
-            # center_3d = centroid_3d + plane_basis @ center_2d
-
-            # Convert the 2D circle center back to 3D
-            center_3d = centroid_3d + center_2d[0]*basis1 + center_2d[1]*basis2
-
-            # Filter out candidate centers that are too far from this sphere's center.
-            distance = np.linalg.norm(center_3d - self.center)
-            if distance > self.radius*1.2:
+            if n_cluster_points < 3: # Need at least 3 points for PCA plane and circle fit
                 continue
 
-            # Append center and radius (spread)
-            candidate_info.append((center_3d, radius))
+            # --- 3. Find Best Fit Plane using PCA ---
+            centroid_3d = np.mean(cluster_coords, axis=0)
+            centered_coords = cluster_coords - centroid_3d
+            try:
+                # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False) # Vt contains principal components as rows
+                # S contains singular values, related to variance along PC directions
+                
+                # Use covariance matrix for potentially better numerical stability with near-planar data
+                cov_matrix = np.cov(centered_coords, rowvar=False)
+                eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix) # eigh for symmetric matrix
+                
+                # Sort eigenvectors by eigenvalues (descending variance)
+                sort_indices = np.argsort(eigenvalues)[::-1]
+                eigenvalues = eigenvalues[sort_indices]
+                eigenvectors = eigenvectors[:, sort_indices] # Eigenvectors are columns
+
+                # plane_basis = Vt[:2].T # First two principal components form the plane basis (shape 3, 2)
+                # plane_normal = Vt[2]   # Third principal component is the normal
+                
+                plane_basis = eigenvectors[:, :2] # Shape (3, 2)
+                plane_normal = eigenvectors[:, 2] # Shape (3,)
+
+            except np.linalg.LinAlgError:
+                 print(f"Warning: SVD/Eigendecomposition failed for cluster {label}. Skipping.")
+                 continue # Skip this cluster if PCA fails
+
+            # --- 4. Project points onto the PCA plane ---
+            # Dot product of centered points with the basis vectors gives 2D coords
+            projected_2d = centered_coords @ plane_basis # Shape (n_cluster_points, 2)
+
+            # --- 5. RANSAC-like Averaging for Circle Fit ---
+            all_centers_2d = []
+            all_radii = []
+            n_attempts = 0
+            
+            # Ensure subset size is valid
+            subset_size = max(3, int(n_cluster_points * ransac_subset_percentage))
+            if subset_size > n_cluster_points:
+                 subset_size = n_cluster_points # Use all points if subset is larger
+
+            for _ in range(ransac_iterations):
+                if n_cluster_points < 3: break # Should be caught earlier, but safety check
+
+                # Randomly sample subset of indices
+                subset_indices = np.random.choice(n_cluster_points, subset_size, replace=False)
+                subset_points_2d = projected_2d[subset_indices]
+
+                # Fit circle to the subset
+                center_2d_iter, radius_iter = fit_circle_2d(subset_points_2d)
+
+                # Basic check for validity (e.g., not NaN, finite, reasonable radius)
+                # You might add stricter checks based on expected radius ranges if needed
+                if np.isfinite(center_2d_iter).all() and np.isfinite(radius_iter) and radius_iter >= 0:
+                    # Optional: Add an inlier check here if you want a true RANSAC
+                    # - Calculate distance of *all* projected_2d points to center_2d_iter
+                    # - Count how many are within `radius_iter +/- threshold`
+                    # - Only store if inlier count is high enough
+                    # For now, we implement the requested averaging of all fits:
+                    all_centers_2d.append(center_2d_iter)
+                    all_radii.append(radius_iter)
+                n_attempts += 1
+
+
+            if not all_centers_2d: # If no valid fits were found
+                # Fallback: Use all points for a single fit
+                center_2d_final, radius_final = fit_circle_2d(projected_2d)
+                if not (np.isfinite(center_2d_final).all() and np.isfinite(radius_final)):
+                     print(f"Warning: Fallback circle fit failed for cluster {label}. Skipping.")
+                     continue # Skip if even the fallback fails
+            else:
+                # Average the results from the iterations
+                avg_center_2d = np.mean(np.array(all_centers_2d), axis=0)
+                avg_radius = np.mean(all_radii) # This is the 'spread' estimate
+
+                # Use the averaged values
+                center_2d_final = avg_center_2d
+                radius_final = avg_radius
+
+            # --- 6. Convert Average 2D Center back to 3D ---
+            # Center_3D = Origin_of_Plane + Linear_Combination_of_Basis_Vectors
+            center_3d_final = centroid_3d + plane_basis @ center_2d_final
+
+            # --- 7. Filter and Store (Same as before) ---
+            distance_from_parent = np.linalg.norm(center_3d_final - self.center)
+            # Allow slightly further candidates if the branch is moving away
+            # Maybe relate the tolerance to the parent radius?
+            distance_tolerance = self.radius * 1.5 # Example tolerance, tunable
+            if distance_from_parent > distance_tolerance:
+                # Optional: print(f"Debug: Candidate cluster {label} too far ({distance_from_parent:.2f} > {distance_tolerance:.2f}). Skipping.")
+                continue
+
+            # radius_final is the estimated spread
+            candidate_info.append((center_3d_final, radius_final)) # Store 3D center and 2D radius (spread)
+            # # Get all points in the current cluster.
+            # cluster_coords = candidate_coords[labels == label]
+            
+            # # Compute the centroid of the cluster in 3D.
+            # centroid_3d = np.mean(cluster_coords, axis=0)
+
+            # # Compute the vector from the sphere center (self.center) to the centroid
+            # v = centroid_3d - self.center
+            # n = v / np.linalg.norm(v)  # Normal of the plane
+
+            # # Choose an arbitrary vector that is not parallel to n.
+            # arbitrary = np.array([0, 0, 1])
+            # if np.abs(np.dot(n, arbitrary)) > 0.99:
+            #     arbitrary = np.array([0, 1, 0])
+                
+            # # Create two orthonormal basis vectors for the plane:
+            # basis1 = arbitrary - np.dot(arbitrary, n) * n
+            # basis1 = basis1 / np.linalg.norm(basis1)
+            # basis2 = np.cross(n, basis1)
+
+            # # Compute offsets of all points from the cluster centroid
+            # offsets = cluster_coords - centroid_3d  # Shape (N, 3)
+
+            # # Compute the dot product of each offset with the plane normal (produces an (N,) array)
+            # proj_comp = offsets @ n  # Equivalent to np.dot(offsets, n)
+
+            # # Remove the component in the normal direction to get the projection vector for every point
+            # proj_vec = offsets - np.outer(proj_comp, n)  # Shape (N, 3)
+
+            # # Compute 2D coordinates by projecting onto basis1 and basis2
+            # x_coords = proj_vec @ basis1  # Shape (N,)
+            # y_coords = proj_vec @ basis2  # Shape (N,)
+
+            # # Stack the 1D coordinate arrays column-wise to form an (N, 2) array for 2D points
+            # projected = np.column_stack((x_coords, y_coords))
+            
+            # # # Fit a best-fit plane using PCA (SVD) on the cluster coordinates.
+            # # centered_coords = cluster_coords - centroid_3d
+            # # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
+            # # # The first two principal components span the best-fit plane.
+            # # plane_basis = Vt[:2].T  # shape (3,2)
+            
+            # # # Project the cluster points onto the plane.
+            # # projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
+
+            # # New: Fit circle in 2D
+            # center_2d, radius = fit_circle_2d(projected)
+
+            # # # Convert 2D circle center back to 3D
+            # # center_3d = centroid_3d + plane_basis @ center_2d
+
+            # # Convert the 2D circle center back to 3D
+            # center_3d = centroid_3d + center_2d[0]*basis1 + center_2d[1]*basis2
+
+            # # Filter out candidate centers that are too far from this sphere's center.
+            # distance = np.linalg.norm(center_3d - self.center)
+            # if distance > self.radius*1.2:
+            #     continue
+
+            # # Append center and radius (spread)
+            # candidate_info.append((center_3d, radius))
 
         # Sometimes the seed sphere hits the start of a branch, thus needing to be an outer sphere
         if self.is_seed and len(candidate_info)==1:
@@ -473,7 +573,18 @@ class CylinderTracker:
     def export_to_dataframe(self):
         return pd.DataFrame([cyl.to_dict() for cyl in self.cylinders.values()])
 
-    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=2, color_by_type=False):
+    def export_mesh_ply(self, filename="cylinders_mesh.ply", resolution=2, color_by_type=False, color_by_root=False): # Added color_by_root
+        """
+        Exports cylinder meshes to a PLY file.
+
+        Parameters:
+          - filename: Output filename.
+          - resolution: Mesh resolution for cylinders.
+          - color_by_type: If True, color 'follow' cylinders green and 'connection' cylinders red.
+          - color_by_root: If True, color root cylinders (no parent) red and others blue.
+                           This overrides color_by_type if both are True.
+          - If both flags are False, colors by radius (default).
+        """
         if not self.cylinders:
             print("No cylinders to export.")
             return
@@ -481,28 +592,61 @@ class CylinderTracker:
         import numpy as np
         import open3d as o3d
 
+        # --- Color definitions ---
+        ROOT_COLOR = [1, 0, 0]  # Red
+        NON_ROOT_COLOR = [0, 0, 1] # Blue
+        FOLLOW_COLOR = [0, 1, 0] # Green
+        CONNECTION_COLOR = [1, 0, 0] # Red (Same as root, maybe change if needed)
+
+        # --- Radius color calculation (only if needed) ---
         radii = np.array([cyl.radius for cyl in self.cylinders.values()])
-        r_min, r_max = np.min([radii.min(), 1e-4]), radii.max()
+        # Handle potential empty radii array if all cylinders somehow have radius 0 or NaN
+        valid_radii = radii[np.isfinite(radii) & (radii > 1e-6)]
+        if len(valid_radii) > 0:
+            r_min, r_max = max(valid_radii.min(), 1e-4), valid_radii.max()
+        else:
+            r_min, r_max = 1e-4, 1e-4 # Fallback if no valid radii
 
         def radius_to_color(radius):
-            t = (radius - r_min) / (r_max - r_min + 1e-8)
-            r = min(2 * t, 1.0)
-            g = min(2 * (1 - t), 1.0)
+            # Clamp radius to avoid issues with potential NaNs or Infs that slipped through
+            radius = np.clip(radius, r_min, r_max)
+            if r_max - r_min < 1e-8: # Avoid division by zero if all radii are almost identical
+                return [0.5, 0.5, 0.5] # Return gray
+            t = (radius - r_min) / (r_max - r_min)
+            # Simple gradient: Green (small) to Red (large)
+            r = t
+            g = 1.0 - t
             b = 0.0
+            # Or use your previous blue-red gradient:
+            # r = t
+            # g = 0.0
+            # b = 1.0 - t
             return [r, g, b]
+        # --- End radius color calculation ---
 
         mesh_list = []
         for cyl in self.cylinders.values():
-            radius = max(cyl.radius, 1e-4)
+            # Ensure radius is positive for mesh creation
+            radius = max(cyl.radius if np.isfinite(cyl.radius) else 1e-4, 1e-4)
             mesh = self._create_cylinder_between(cyl.start, cyl.end, radius, resolution)
-            if color_by_type:
-                # Use red for connection cylinders, green for sphere-following cylinders.
-                if cyl.cyl_type == "connection":
-                    color = [1, 0, 0]
+
+            # --- Determine Color ---
+            color = [0.5, 0.5, 0.5] # Default gray
+
+            if color_by_root: # Highest priority coloring
+                if cyl.parent_cylinder_id is None:
+                    color = ROOT_COLOR
                 else:
-                    color = [0, 1, 0]
-            else:
-                color = radius_to_color(radius)
+                    color = NON_ROOT_COLOR
+            elif color_by_type: # Second priority
+                if cyl.cyl_type == "connection":
+                    color = CONNECTION_COLOR
+                else: # 'follow' type
+                    color = FOLLOW_COLOR
+            else: # Default: color by radius
+                 color = radius_to_color(radius)
+            # --- End Determine Color ---
+
             mesh.paint_uniform_color(color)
             mesh_list.append(mesh)
 
@@ -510,11 +654,12 @@ class CylinderTracker:
             print("⚠️ No valid cylinder meshes generated.")
             return
 
+        # Combine meshes
         combined = mesh_list[0]
         for m in mesh_list[1:]:
             combined += m
 
-        # Optional: postprocess to remove duplicate vertices.
+        # Postprocessing
         combined.remove_duplicated_vertices()
         combined.remove_duplicated_triangles()
         combined.remove_degenerate_triangles()
@@ -658,6 +803,9 @@ def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1, sphe
     spread = np.median(dists)
     spread = max(spread, 0.05)
     radius = max(spread * 2, 0.1)
+
+    # Make sure sphere is at the bottom
+    center[2] = min_z
 
     return Sphere(center, radius=radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
 
@@ -1105,7 +1253,9 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                                                                   min_samples=params['min_samples'],
                                                                   algorithm=params['clustering_algorithm'],
                                                                   linkage=params['clustering_linkage'],
-                                                                  clustering_type=params['clustering_type'])
+                                                                  clustering_type=params['clustering_type'],
+                                                                  ransac_iterations=params["ransac_iterations"], 
+                                                                  ransac_subset_percentage=params["ransac_subset_percentage"])
 
         # If no candidates found for this sphere
         if not candidate_info:
@@ -1225,8 +1375,16 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                 # Assign points from the available set
                 next_sphere.assign_points(points, points_available_for_new_spheres, params['device'], point_tree)
 
+                # Find the points that were both available AND are contained in the new sphere.
+                # This uses the state of 'unsegmented_points' from *before* this sphere's processing began.
+                potential_new_points_indices = np.intersect1d(
+                    next_sphere.contained_points,
+                    points_available_for_new_spheres, # Points that were unsegmented before this sphere's turn
+                    assume_unique=True # Optimization if both arrays are guaranteed unique (likely true)
+                )
+
                 # Check threshold (Identical logic to original)
-                if len(next_sphere.contained_points) >= params['min_points_threshold']:
+                if len(potential_new_points_indices) >= params['min_points_threshold']:
                     grown_init = True # Mark growth happened
                     generated_new_sphere_from_current = True
 
@@ -1263,22 +1421,75 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
         # --- Segmentation Update Point (Mirrors end of inner BFS loop iteration) ---
         # This happens *after* processing all candidates/children generated by current_sphere.
+        # if params['segmentation_type'] == 'cylinder':
+        #     # Check if any cylinders were actually added by children of current_sphere
+        #     if generated_new_sphere_from_current and cylinder_tracker.recent_cylinders:
+        #          # Pass the current unsegmented_points array. It will be updated.
+        #          new_unsegmented_points = cylinder_proximity_based_segmentation(
+        #              points, unsegmented_points, current_sphere,
+        #              cylinder_tracker.recent_cylinders, # Use recently added cylinders
+        #              point_tree=point_tree,
+        #              eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
+        #          )
+        #          unsegmented_points = new_unsegmented_points # Update the main array
+        #          cylinder_tracker.recent_cylinders = [] # Clear recent
+        #     else:
+        #          # Ensure recent_cylinders is cleared even if no new spheres were generated
+        #          # or if segmentation wasn't called.
+        #          cylinder_tracker.recent_cylinders = []
+
+        # --- MODIFIED Segmentation Update Point ---
+        # Track indices segmented *directly* by sphere assignment in this step
+        newly_segmented_by_sphere_assignment = []
+        # You need to collect these inside the 'if len(potential_new_points_indices) >= ...' block:
+        # Add this line inside that block, right after segmentation_ids[...] = current_sphere_id
+        # newly_segmented_by_sphere_assignment.extend(potential_new_points_indices) # Requires moving definition outside loop
+
+        # Identify points assigned the current ID during this parent sphere's processing
+        points_assigned_this_step = np.where(segmentation_ids == current_sphere_id)[0]
+        # Intersect with points that were available at the start to find genuinely new ones
+        newly_segmented_indices = np.intersect1d(points_assigned_this_step, available_points_for_candidates, assume_unique=True)
+
         if params['segmentation_type'] == 'cylinder':
-            # Check if any cylinders were actually added by children of current_sphere
+            removed_by_cyl = np.array([], dtype=int) # Initialize
+            # If new cylinders were added, attempt segmentation near the *parent* sphere
             if generated_new_sphere_from_current and cylinder_tracker.recent_cylinders:
-                 # Pass the current unsegmented_points array. It will be updated.
-                 new_unsegmented_points = cylinder_proximity_based_segmentation(
-                     points, unsegmented_points, current_sphere,
-                     cylinder_tracker.recent_cylinders, # Use recently added cylinders
-                     point_tree=point_tree,
-                     eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
-                 )
-                 unsegmented_points = new_unsegmented_points # Update the main array
-                 cylinder_tracker.recent_cylinders = [] # Clear recent
-            else:
-                 # Ensure recent_cylinders is cleared even if no new spheres were generated
-                 # or if segmentation wasn't called.
-                 cylinder_tracker.recent_cylinders = []
+                 # Base the cylinder search only on points that were available at the start *and* weren't just segmented by spheres
+                 points_to_check_for_cyl_segmentation = np.setdiff1d(available_points_for_candidates, newly_segmented_indices, assume_unique=True)
+
+                 if points_to_check_for_cyl_segmentation.size > 0:
+                     new_unsegmented_after_cyl = cylinder_proximity_based_segmentation(
+                         points,
+                         points_to_check_for_cyl_segmentation, # Check subset
+                         current_sphere, # Check around the parent sphere
+                         cylinder_tracker.recent_cylinders, # Use recently added cylinders
+                         point_tree=point_tree,
+                         eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
+                     )
+                     # Identify points removed specifically by cylinder segmentation
+                     removed_by_cyl = np.setdiff1d(points_to_check_for_cyl_segmentation, new_unsegmented_after_cyl, assume_unique=True)
+
+                 cylinder_tracker.recent_cylinders = [] # Clear recent list regardless
+
+            # Combine points removed by sphere assignment AND cylinder proximity
+            all_removed_indices = np.union1d(newly_segmented_indices, removed_by_cyl)
+
+            # --- Sanity Check 1: Check if *any* points were removed ---
+            if generated_new_sphere_from_current and all_removed_indices.size == 0:
+                 print(f"WARNING: Sphere {current_sphere.center} generated children but no points removed in segmentation update. Newly segmented={len(newly_segmented_indices)}, Removed by Cyl={len(removed_by_cyl)}")
+                 # Consider adding a mechanism here to mark current_sphere as outer or skip adding children if this happens repeatedly
+
+            # Update the main unsegmented list by removing these indices using sets
+            current_unsegmented_set = set(unsegmented_points)
+            original_count = len(current_unsegmented_set)
+            current_unsegmented_set.difference_update(all_removed_indices)
+            new_count = len(current_unsegmented_set)
+
+            # --- Sanity Check 2: Check if count actually decreased ---
+            #if generated_new_sphere_from_current and new_count == original_count and all_removed_indices.size > 0 :
+            #    print(f"WARNING: Indices were identified for removal ({len(all_removed_indices)}), but unsegmented_points count did not decrease!")
+
+            unsegmented_points = np.array(list(current_unsegmented_set), dtype=int)
 
         elif params['segmentation_type'] == 'sphere':
              # Re-filter based on all assigned IDs so far
@@ -1645,7 +1856,9 @@ def fitQSM_DepthFirst(
         'eps_cylinder': 0.1,
         'segmentation_type': 'cylinder',
         'only_correct_connections': True,
-        'priority_alpha': 0.7,
+        'priority_alpha': 0.5,
+        'ransac_iterations': 10, 
+        'ransac_subset_percentage': 0.8,
         'device': device,
     }
 
@@ -1743,18 +1956,18 @@ def fitQSM_DepthFirst(
                 import traceback
                 traceback.print_exc()
 
-    else:
-            if verbose: print("Step 4: No clusters found to merge.")
+    # else:
+    #         if verbose: print("Step 4: No clusters found to merge.")
 
-    if cylinder_tracker.cylinders: # Only correct if cylinders exist
-        if verbose: print("Step 5: Correct cylinder radii")
-        try:
-                correct_cylinder_radii(cylinder_tracker, params)
-                if verbose: print("Radii corrected.")
-        except Exception as e:
-                print(f"Error during radius correction: {e}. Skipping correction.")
-                import traceback
-                traceback.print_exc()
+    # if cylinder_tracker.cylinders: # Only correct if cylinders exist
+    #     if verbose: print("Step 5: Correct cylinder radii")
+    #     try:
+    #             correct_cylinder_radii(cylinder_tracker, params)
+    #             if verbose: print("Radii corrected.")
+    #     except Exception as e:
+    #             print(f"Error during radius correction: {e}. Skipping correction.")
+    #             import traceback
+    #             traceback.print_exc()
         
         roots = [cyl for cyl in cylinder_tracker.cylinders.values() if cyl.parent_cylinder_id is None]
         if verbose: print(f"Number of root cylinders after potential merge/correction: {len(roots)}")
@@ -1779,7 +1992,7 @@ def fitQSM_DepthFirst(
         try:
             output_path_ply = f"{qsm_output_base}_cylinders.ply"
             os.makedirs(os.path.dirname(output_path_ply), exist_ok=True)
-            cylinder_tracker.export_mesh_ply(output_path_ply, resolution=10, color_by_type=True)
+            cylinder_tracker.export_mesh_ply(output_path_ply, resolution=10, color_by_root=True)
             if verbose: print(f"    Cylinder mesh saved to: {output_path_ply}")
         except Exception as e:
              print(f"    ERROR saving cylinder PLY: {e}")
