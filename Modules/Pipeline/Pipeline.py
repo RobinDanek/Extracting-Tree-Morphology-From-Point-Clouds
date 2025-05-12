@@ -57,6 +57,7 @@ def run_pipeline(
         qsm_fitting=True,
         qsm_type="depth", # "depth" or "breadth"
         qsm_verbose=False,
+        qsm_debug=False,
         save_model_predictions=False, # Control saving in makePredictions
         save_super_sampling=False, # Control saving in superSample
         save_qsm_cyl_ply=False,   # Control saving in fitQSM_*
@@ -186,7 +187,7 @@ def run_pipeline(
 
             # STEP 3: QSM Fitting
             if qsm_fitting:
-                print("  Running QSM Fitting Step...")
+                print(f"  Running QSM Fitting Step...\nCloud size {len(current_cloud_data)}")
                 if qsm_type == "depth":
                     fitQSM_DepthFirst(
                         cloud_data=current_cloud_data,
@@ -196,7 +197,8 @@ def run_pipeline(
                         save_sphere_ply=save_qsm_sphere_ply,
                         save_csv=save_qsm_cyl_csv,
                         verbose=qsm_verbose,
-                        device=device
+                        device=device,
+                        debug=qsm_debug
                     )
                 elif qsm_type == "breadth":
                     fitQSM_BreadthFirst(

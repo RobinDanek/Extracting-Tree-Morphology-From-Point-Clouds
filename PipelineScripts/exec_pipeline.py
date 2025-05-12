@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument('--save_qsm_cyl_ply', action='store_true', default=False, help="Save QSM cylinder geometry as PLY.")
     parser.add_argument('--save_qsm_sphere_ply', action='store_true', default=False, help="Save QSM sphere geometry as PLY.")
     parser.add_argument('--qsm_verbose', action='store_true', default=False, help="Enable verbose output during QSM fitting.")
+    parser.add_argument('--qsm_debug', action="store_true", default=False, help="Create log file monitoring cylinder and sphere creation")
 
     return parser.parse_args()
 
@@ -57,5 +58,6 @@ if __name__ == "__main__":
         save_qsm_cyl_csv=args.save_qsm_cyl_csv,
         save_qsm_cyl_ply=args.save_qsm_cyl_ply,
         save_qsm_sphere_ply=args.save_qsm_sphere_ply,
-        qsm_verbose=args.qsm_verbose
+        qsm_verbose=args.qsm_verbose,
+        qsm_debug=args.qsm_debug
         )
