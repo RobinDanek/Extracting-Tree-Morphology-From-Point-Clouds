@@ -93,11 +93,11 @@ def plot_full_qsm_comparison(dist_orig, dist_pred, mean_dists, errors, improveme
     # Apply custom font sizes
     plt.rcParams.update({
         'font.size': 10,
-        'axes.titlesize': 18,
+        'axes.titlesize': 17,
         'axes.labelsize': 15,
         'xtick.labelsize': 10,
         'ytick.labelsize': 10,
-        'figure.titlesize': 18
+        'figure.titlesize': 17
     })
 
     fig = plt.figure(figsize=(12, 6))
@@ -143,7 +143,7 @@ def plot_full_qsm_comparison(dist_orig, dist_pred, mean_dists, errors, improveme
     ax_left.set_yticklabels(xtick_labs)
     ax_left.set_xlabel('Original Point to QSM Distance (custom scaled)')
     ax_left.set_ylabel('New Point to QSM Distance (custom scaled)')
-    ax_left.set_title("Poin to QSM Distance produced by the Pipeline with TreeLearn")
+    ax_left.set_title("Point to QSM Distance produced by the Sparse U-Net Pipeline")
     ax_left.axhline(custom_scale([0.1])[0], color='gray', linewidth=1.0)
     ax_left.axvline(custom_scale([0.1])[0], color='gray', linewidth=1.0)
     ax_left.grid(True, linestyle='--', linewidth=0.5)

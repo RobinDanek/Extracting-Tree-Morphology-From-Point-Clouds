@@ -75,8 +75,12 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
                     ])
                     start_xy = np.array([row['startX'], row['startY']]) - [cx, cy]
                     end_xy = np.array([row['endX'], row['endY']]) - [cx, cy]
-                    start = np.array([start_xy @ rot.T[0], row['startZ']])
-                    end = np.array([end_xy @ rot.T[0], row['endZ']])
+
+                    start_rotated = start_xy @ rot.T
+                    end_rotated = end_xy @ rot.T
+
+                    start = np.array([start_rotated[0], row['startZ']])
+                    end = np.array([end_rotated[0], row['endZ']])
                 else:  # 'x'
                     start = np.array([row['startY'], row['startZ']])
                     end = np.array([row['endY'], row['endZ']])

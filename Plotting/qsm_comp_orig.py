@@ -58,16 +58,16 @@ def plot_distances(dist_orig, dist_pred, model_type, tree_plots=None, plot_savep
     from scipy.stats import binned_statistic
     from scipy.optimize import curve_fit
 
-    # # === Font size settings ===
-    # plt.rcParams.update({
-    #     'font.size': 14,            # Base font size
-    #     'axes.titlesize': 18,       # Title
-    #     'axes.labelsize': 16,       # Axis labels
-    #     'xtick.labelsize': 12,      # Tick labels
-    #     'ytick.labelsize': 12,
-    #     'legend.fontsize': 14,      # Legend
-    #     'figure.titlesize': 20      # Figure title (if used)
-    # })
+    # === Font size settings ===
+    plt.rcParams.update({
+        'font.size': 14,            # Base font size
+        'axes.titlesize': 18,       # Title
+        'axes.labelsize': 16,       # Axis labels
+        'xtick.labelsize': 14,      # Tick labels
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14,      # Legend
+        'figure.titlesize': 20      # Figure title (if used)
+    })
 
     def custom_scale(val):
         val = np.asarray(val)
