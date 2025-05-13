@@ -12,8 +12,9 @@ import random
 import torch
 import logging
 import io
-import heapq # <-- Import heapq
-import itertools # <-- Import itertools for unique IDs
+import heapq
+import itertools
+import numba
 
 
 
@@ -849,21 +850,30 @@ def initialize_first_sphere(points, slice_height=0.5, sphere_thickness=0.1, sphe
     return Sphere(center_3d_final, radius=radius_final*2, thickness=sphere_thickness, is_seed=True, spread=radius_final, thickness_type=sphere_thickness_type)
 
 
-def find_seed_sphere(points, unsegmented_points, sphere_radius, sphere_thickness, sphere_thickness_type='relative', device=None, point_tree=None, logger=None):
+def find_seed_sphere(points, potential_seed_indices, sphere_radius, sphere_thickness, sphere_thickness_type='relative', device=None, point_tree=None, logger=None):
     """
     Randomly pick one unsegmented point and create a seed sphere centered on it.
     """
-    seed_idx = random.choice(unsegmented_points)
+    if potential_seed_indices.size == 0:
+         raise ValueError("No potential seed indices provided to find_seed_sphere.")
+
+    seed_idx = random.choice(potential_seed_indices)
     seed_point = points[seed_idx]
     
-    temp_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True)
-    temp_sphere.assign_points(points, unsegmented_points, device=device, point_tree=point_tree)
-    spread = compute_spread_of_points(points[temp_sphere.contained_points])
+    # temp_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True)
+    # temp_sphere.assign_points(points, unsegmented_points, device=device, point_tree=point_tree)
+    # spread = compute_spread_of_points(points[temp_sphere.contained_points])
 
-    # if logger is not None:
-    #     logger.info(f"*** New Seed Shere created ***\n@ {seed_point}\nradius: {sphere_radius}\nspread: {spread}")
+    # # if logger is not None:
+    # #     logger.info(f"*** New Seed Shere created ***\n@ {seed_point}\nradius: {sphere_radius}\nspread: {spread}")
 
-    return Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
+    # return Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
+
+    if logger is not None:
+        logger.info(f"*** Potential Seed Sphere selected ***\n@ {seed_point}\nInitial Radius: {sphere_radius}")
+
+    # Return a basic sphere without assigned points or spread yet
+    return Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=None, thickness_type=sphere_thickness_type)
 
 
 def connection_distance(sphere_a, sphere_b):
@@ -874,12 +884,12 @@ def connection_distance(sphere_a, sphere_b):
     return np.linalg.norm(sphere_a.center - sphere_b.center) - (sphere_a.radius + sphere_b.radius)
 
 
-def find_neighborhood_points(points, unsegmented_points, sphere, search_radius, point_tree):
+def find_neighborhood_points(points, unsegmented_mask, sphere, search_radius, point_tree):
     """
     Efficiently finds unsegmented points within a given radius using KDTree.
     """
-    if unsegmented_points.size == 0:
-        return np.array([], dtype=int)
+    if unsegmented_mask.sum() == 0: # Check if any points are unsegmented
+        return np.array([], dtype=int) # Optional: Early exit if mask is all False
 
     # coords = points[unsegmented_points]
     # tree = cKDTree(coords)
@@ -897,35 +907,21 @@ def find_neighborhood_points(points, unsegmented_points, sphere, search_radius, 
         if not local_indices:
             return np.array([], dtype=int)
 
+         # Ensure local_indices is a numpy array for boolean indexing
+        local_indices = np.array(local_indices, dtype=int)
     except Exception as e:
         # Handle potential errors during KDTree query (e.g., invalid inputs)
         print(f"Warning: KDTree query failed in find_neighborhood_points_optimized for center {sphere.center}, radius {query_radius}. Error: {e}")
         return np.array([], dtype=int)
 
 
-    # 2. Filter the local_indices to keep only those present in unsegmented_points
-    # Using set intersection is generally efficient for this filtering.
+    # 2. Filter the local_indices using the unsegmented_mask directly
+    # Keep only indices that are BOTH local AND marked True in unsegmented_mask
+    valid_local_indices_mask = unsegmented_mask[local_indices]
+    intersection_indices = local_indices[valid_local_indices_mask]
 
-    # Ensure local_indices are suitable for set operations (e.g., handle potential nested lists if API changes)
-    # For a single query point, it should be a flat list of integers.
-    try:
-        local_indices_set = set(local_indices)
-    except TypeError:
-        # Handle cases where local_indices might not be directly convertible (shouldn't happen with single point query)
-        # Fallback or return empty might be needed depending on the cause
-        local_indices_set = set() # Create empty set to proceed safely
-
-    unsegmented_set = set(unsegmented_points)
-
-    # Find the intersection: points that are both local and unsegmented
-    intersection_indices = local_indices_set.intersection(unsegmented_set)
-
-    # 3. Return the result as a NumPy array
-    if not intersection_indices:
-        return np.array([], dtype=int)
-    else:
-        # Convert the set back to a NumPy array
-        return np.array(list(intersection_indices), dtype=int)
+    # 3. Return the filtered indices as a NumPy array
+    return intersection_indices # Return the array of indices
 
 
 def cluster_labels_agglomerative(points, eps=0.2, min_cluster_size=5, linkage='average'):
@@ -1107,7 +1103,7 @@ def find_best_merge_connection(outer_spheres_main, outer_spheres_branch, cylinde
     best_candidate = min(valid_candidates, key=lambda x: x[2])
     return best_candidate
 
-def cylinder_proximity_based_segmentation(points, unsegmented_points, query_sphere: Sphere, cylinders, point_tree, eps, device, batch_size=1024):
+def cylinder_proximity_based_segmentation(points, input_unsegmented_mask, query_sphere: Sphere, cylinders, point_tree, eps, device, batch_size=1024):
     """
     Process only the unsegmented points to assign them to their closest fitted cylinders.
     
@@ -1150,50 +1146,55 @@ def cylinder_proximity_based_segmentation(points, unsegmented_points, query_sphe
 
     # create valid subset of points
     # Get points within the sphere
-    local_indices = np.array(point_tree.query_ball_point( query_sphere.center, query_sphere.radius * 3 ))
+    # Changed Subset Selection:
+    local_indices = point_tree.query_ball_point(query_sphere.center, query_sphere.radius * 3)
+    if not local_indices:
+        return input_unsegmented_mask.copy() # Return unchanged copy if no points nearby
 
-    # Pick the correct subset (Near sphere and unsegmented)
-    mask = np.zeros(points.shape[0], dtype=bool)
-    mask[unsegmented_points] = True
-    subset_indices = local_indices[mask[local_indices]]
-    
-    # Get the subset of points for the provided indices
+    local_indices = np.array(local_indices, dtype=int)
+
+    # Create a mask for points that are BOTH local AND in the input_unsegmented_mask
+    local_mask_full = np.zeros_like(input_unsegmented_mask)
+    local_mask_full[local_indices] = True
+    process_mask = local_mask_full & input_unsegmented_mask
+
+    # Get the indices of points to process
+    subset_indices = np.where(process_mask)[0]
+    if subset_indices.size == 0:
+        return input_unsegmented_mask.copy() # Return unchanged copy if no points to process
+
     subset_points = points[subset_indices]
+    num_pts = len(subset_indices) # Use size of index array
 
-    # Number of unsegmented points to process:
-    num_pts = len(subset_points)
-
-    # Save indices that are close to the cylinders
-    segmented_indices = []
+    output_mask = input_unsegmented_mask.copy() # Work on a copy
+    all_segmented_global_indices = [] # Collect indices to mark False
 
     # Process unsegmented points in batches.
     for j in range(0, num_pts, batch_size):
-
-        # Global indices for these points:
-        batch_global_inds = subset_indices[j:j+batch_size]
-        # Extract batch (using these global indices)
-        batch_points = points[batch_global_inds, :3]
+        batch_indices_in_subset = np.arange(j, min(j + batch_size, num_pts))
+        batch_global_indices = subset_indices[batch_indices_in_subset] # Global indices for this batch
+        batch_points = points[batch_global_indices, :3] # Get points using global indices
 
         # Compute closest cylinder info for this batch using your CUDA function.
         ids_batch, distances_batch, offsets_batch = closest_cylinder_cuda_batch(
             batch_points, start_t, radius_t, axis_length, axis_unit, IDs_t, device, move_points_to_mantle=True
         )
-        # ids_batch, distances_batch, and offsets_batch are NumPy arrays (assumed shape: (n_batch, ))
-        # where offsets_batch is (n_batch, 3)
 
         # Determine segmentation for this batch: mark points if distance < eps.
-        seg_mask = distances_batch < eps
+        seg_mask_batch = distances_batch < eps # Boolean mask relative to the batch
 
-        # Discard points that were segmented
-        segmented_indices.extend(batch_global_inds[seg_mask])
+        # Get the global indices of points segmented *in this batch*
+        segmented_in_batch_global_indices = batch_global_indices[seg_mask_batch]
+        all_segmented_global_indices.extend(segmented_in_batch_global_indices)
 
-    # Now remove the segmented indices from the original unsegmented_points:
-    segmented_indices = np.array(segmented_indices, dtype=np.int32)
-    new_unsegmented_points = np.setdiff1d(unsegmented_points, segmented_indices)
-    return new_unsegmented_points
+    # Update the output mask by setting newly segmented points to False
+    if all_segmented_global_indices: # Check if the list is not empty
+        output_mask[np.array(all_segmented_global_indices, dtype=int)] = False
+
+    return output_mask
 
 
-def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere, segmentation_ids: np.ndarray, unsegmented_points: np.ndarray, cylinder_tracker: CylinderTracker, params: dict, point_tree, progress_bar=None, logger=None):
+def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere, segmentation_ids: np.ndarray, unsegmented_mask: np.ndarray, cylinder_tracker: CylinderTracker, params: dict, point_tree, progress_bar=None, logger=None):    
     """
     Perform sphere-following clustering using a priority queue based on sphere spread.
     This version strictly mimics the original cluster_points logic for sphere_id
@@ -1215,14 +1216,11 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
     pq = []  # Priority queue (min-heap)
     unique_id_counter = itertools.count() # For stable sorting in heap
 
-    # Ensure unsegmented_points is a NumPy array (it should be already based on signature)
-    unsegmented_points = np.array(unsegmented_points, dtype=int)
-
     # --- Initial Sphere Handling (Mirrors original start) ---
     cluster.add_sphere(initial_sphere)
 
     # Assign points using the current unsegmented list
-    initial_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+    initial_sphere.assign_points(points, unsegmented_mask, params['device'], point_tree)
 
     # Use a mutable variable for the ID, starting with the input ID.
     current_sphere_id = sphere_id_start
@@ -1249,17 +1247,16 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
         # No IDs were used/incremented, so return the starting ID.
 
         # Segment the points of the too small sphere to exclude them from further sphere following
-        mask = segmentation_ids[unsegmented_points] != initial_sphere_id_fail_safe
-        unsegmented_points = unsegmented_points[mask]
+        unsegmented_mask[initial_sphere.contained_points] = False # Mark points of small sphere as segmented (or ignored)
         if progress_bar is not None:
-            progress_bar.n = progress_bar.total - len(unsegmented_points)
+            progress_bar.n = progress_bar.total - np.sum(unsegmented_mask) # Update progress bar
             progress_bar.refresh()
-
-        return cluster, sphere_id_start, segmentation_ids, unsegmented_points
+        # Return the mask
+        return cluster, sphere_id_start, segmentation_ids, unsegmented_mask
 
     # Perform initial segmentation update based on type (mirrors original logic)
     if params['segmentation_type'] == 'sphere':
-        unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+        unsegmented_mask &= (segmentation_ids == -1) # Update mask directly
     # No cylinder segmentation needed yet for the initial sphere itself.
 
     # Add the initial sphere to the priority queue
@@ -1304,12 +1301,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
         # --- Candidate Generation (Uses current unsegmented points state) ---
         # Determine the points available for candidate search based on segmentation type
-        if params['segmentation_type'] == 'sphere':
-             # In sphere mode, always use the latest filtered list
-             available_points_for_candidates = unsegmented_points
-        else:
-             # In cylinder mode, unsegmented_points array holds the current state
-             available_points_for_candidates = unsegmented_points
+        available_points_mask = unsegmented_mask.copy()
 
         # Assign points *just for candidate finding* - This is implicit in original,
         # but good practice here to ensure candidates are found based on current points.
@@ -1337,18 +1329,14 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
             # Since no children were generated from current_sphere, we proceed to
             # the segmentation update and ID increment steps as if the inner BFS loop finished for this sphere.
 
-            # 1. Perform Segmentation Update (based on type)
-            if params['segmentation_type'] == 'cylinder':
-                # No new cylinders created, so no cylinder segmentation call needed here.
-                # recent_cylinders should be empty.
-                pass
-            elif params['segmentation_type'] == 'sphere':
+            if params['segmentation_type'] == 'sphere':
                 # Re-filter based on all assigned IDs so far
-                unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
-
-            # 2. Increment Sphere ID (ready for the next sphere processing)
+                # Note: This update happens *after* a sphere fails to produce children.
+                # The main unsegmented_mask is updated.
+                unsegmented_mask &= (segmentation_ids == -1)
+            # Cylinder segmentation doesn't happen here as no cylinders were made.
             current_sphere_id += 1
-            continue # Process the next sphere from the priority queue
+            continue
 
 
         # --- Process Candidates (if any found) ---
@@ -1360,11 +1348,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
         generated_new_sphere_from_current = False # Track if any valid sphere is created from this parent
 
         # --- Determine points available for assigning to *new* spheres ---
-        # This depends on segmentation type, reflecting the state *before* processing current_sphere's children
-        if params['segmentation_type'] == 'sphere':
-             points_available_for_new_spheres = unsegmented_points # Uses the currently filtered list
-        else: # cylinder
-             points_available_for_new_spheres = unsegmented_points # Uses the array potentially modified by previous cylinder segmentations
+        points_available_mask_for_new_spheres = available_points_mask
 
 
         # --- Candidate Grouping/Merging Logic (Identical to original) ---
@@ -1393,13 +1377,13 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                 # Important: assign_points for temp spheres uses points_available_for_new_spheres
                 grouped_centers = candidate_centers[label_indices]; grouped_spreads = candidate_spreads[label_indices]
                 temp_spheres = []; weights = []
-                if len(points_available_for_new_spheres) > 0: # Check if points exist
+                if sum(points_available_mask_for_new_spheres) > 0: # Check if points exist
                     for center, spread in zip(grouped_centers, grouped_spreads):
                         temp_capped_spread = np.clip(spread, lower_bound, upper_bound)
                         temp_new_radius = max(temp_capped_spread * params['sphere_factor'], params['radius_min'])
                         temp_new_radius = min(temp_new_radius, params['radius_max'])
                         temp = Sphere(center, radius=temp_new_radius, thickness=params["sphere_thickness"], spread=spread, thickness_type=params["sphere_thickness_type"])
-                        temp.assign_points(points, points_available_for_new_spheres, params['device'], point_tree)
+                        temp.assign_points(points, points_available_mask_for_new_spheres, params['device'], point_tree)
                         if len(temp.contained_points) >= params['min_points_threshold']:
                             temp_spheres.append(temp); weights.append(len(temp.contained_points))
                 if not temp_spheres: continue # Skip this label if no valid temp spheres for merging
@@ -1413,7 +1397,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                      merged_sphere_obj.radius = min(max(capped_spread * params['sphere_factor'], params['radius_min']), params['radius_max'])
                      merged_sphere_obj.spread = capped_spread
                      # Re-assign points just in case? Or assume initial assign was sufficient? Let's re-assign.
-                     merged_sphere_obj.assign_points(points, points_available_for_new_spheres, params['device'], point_tree)
+                     merged_sphere_obj.assign_points(points, points_available_mask_for_new_spheres, params['device'], point_tree)
                      next_sphere = merged_sphere_obj # Use this as the result for the label
                 else: # Actual merging of multiple temp_spheres
                      sub_centers = np.array([s.center for s in temp_spheres]); sub_spreads = np.array([s.spread for s in temp_spheres])
@@ -1446,23 +1430,24 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
             # --- Process the created 'next_sphere' (if one was created) ---
             if next_sphere is not None:
                 # Assign points from the available set
-                next_sphere.assign_points(points, points_available_for_new_spheres, params['device'], point_tree)
+                next_sphere.assign_points(points, points_available_mask_for_new_spheres, params['device'], point_tree)
 
-                # Find the points that were both available AND are contained in the new sphere.
-                # This uses the state of 'unsegmented_points' from *before* this sphere's processing began.
-                potential_new_points_indices = np.intersect1d(
-                    next_sphere.contained_points,
-                    points_available_for_new_spheres, # Points that were unsegmented before this sphere's turn
-                    assume_unique=True # Optimization if both arrays are guaranteed unique (likely true)
-                )
+                # Check threshold based on points contained AND available (approx. line 1426-1431):
+                # Create a boolean mask for points contained in the new sphere
+                contained_mask_for_next = np.zeros_like(unsegmented_mask) # Use main mask shape
+                if next_sphere.contained_points.size > 0: # Avoid error with empty array
+                    contained_mask_for_next[next_sphere.contained_points] = True
+
+                # Find points that are both contained AND were available
+                potential_new_points_mask = contained_mask_for_next & points_available_mask_for_new_spheres
 
                 # Check threshold (Identical logic to original)
-                if len(potential_new_points_indices) >= params['min_points_threshold']:
+                if np.sum(potential_new_points_mask) >= params['min_points_threshold']:
                     grown_init = True # Mark growth happened
                     generated_new_sphere_from_current = True
 
                     # --- Assign current_sphere_id --- (Mirrors original)
-                    segmentation_ids[next_sphere.contained_points] = current_sphere_id
+                    segmentation_ids[potential_new_points_mask] = current_sphere_id
 
                     # Add to cluster object, create cylinder
                     cluster.add_sphere(next_sphere)
@@ -1507,85 +1492,61 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
         # --- Finished processing all candidates for current_sphere ---
 
-        # --- Segmentation Update Point (Mirrors end of inner BFS loop iteration) ---
-        # This happens *after* processing all candidates/children generated by current_sphere.
-        # if params['segmentation_type'] == 'cylinder':
-        #     # Check if any cylinders were actually added by children of current_sphere
-        #     if generated_new_sphere_from_current and cylinder_tracker.recent_cylinders:
-        #          # Pass the current unsegmented_points array. It will be updated.
-        #          new_unsegmented_points = cylinder_proximity_based_segmentation(
-        #              points, unsegmented_points, current_sphere,
-        #              cylinder_tracker.recent_cylinders, # Use recently added cylinders
-        #              point_tree=point_tree,
-        #              eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
-        #          )
-        #          unsegmented_points = new_unsegmented_points # Update the main array
-        #          cylinder_tracker.recent_cylinders = [] # Clear recent
-        #     else:
-        #          # Ensure recent_cylinders is cleared even if no new spheres were generated
-        #          # or if segmentation wasn't called.
-        #          cylinder_tracker.recent_cylinders = []
-
         # --- MODIFIED Segmentation Update Point ---
-        # Track indices segmented *directly* by sphere assignment in this step
-        newly_segmented_by_sphere_assignment = []
-        # You need to collect these inside the 'if len(potential_new_points_indices) >= ...' block:
-        # Add this line inside that block, right after segmentation_ids[...] = current_sphere_id
-        # newly_segmented_by_sphere_assignment.extend(potential_new_points_indices) # Requires moving definition outside loop
-
         # Identify points assigned the current ID during this parent sphere's processing
-        points_assigned_this_step = np.where(segmentation_ids == current_sphere_id)[0]
-        # Intersect with points that were available at the start to find genuinely new ones
-        newly_segmented_indices = np.intersect1d(points_assigned_this_step, available_points_for_candidates, assume_unique=True)
+        points_assigned_this_step_mask = (segmentation_ids == current_sphere_id)
+
+        # Intersect with points that were available at the start to find genuinely new ones for sphere assignment
+        newly_segmented_by_sphere_mask = points_assigned_this_step_mask & available_points_mask
 
         if params['segmentation_type'] == 'cylinder':
-            removed_by_cyl = np.array([], dtype=int) # Initialize
-            # If new cylinders were added, attempt segmentation near the *parent* sphere
+            removed_by_cyl_mask = np.zeros_like(unsegmented_mask) # Initialize mask for cylinder removals
+
+            # If new cylinders were added, attempt segmentation
             if generated_new_sphere_from_current and cylinder_tracker.recent_cylinders:
-                 # Base the cylinder search only on points that were available at the start *and* weren't just segmented by spheres
-                 points_to_check_for_cyl_segmentation = np.setdiff1d(available_points_for_candidates, newly_segmented_indices, assume_unique=True)
+                # Base the cylinder search only on points that were available at the start *and* weren't just segmented by spheres
+                mask_to_check_for_cyl = available_points_mask & ~newly_segmented_by_sphere_mask
 
-                 if points_to_check_for_cyl_segmentation.size > 0:
-                     new_unsegmented_after_cyl = cylinder_proximity_based_segmentation(
-                         points,
-                         points_to_check_for_cyl_segmentation, # Check subset
-                         current_sphere, # Check around the parent sphere
-                         cylinder_tracker.recent_cylinders, # Use recently added cylinders
-                         point_tree=point_tree,
-                         eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
-                     )
-                     # Identify points removed specifically by cylinder segmentation
-                     removed_by_cyl = np.setdiff1d(points_to_check_for_cyl_segmentation, new_unsegmented_after_cyl, assume_unique=True)
+                if np.any(mask_to_check_for_cyl): # Only call if there are points to check
+                    # cylinder_proximity_based_segmentation returns the updated mask for the checked points
+                    updated_mask_after_cyl = cylinder_proximity_based_segmentation(
+                        points,
+                        mask_to_check_for_cyl, # Pass the specific mask of points to check
+                        current_sphere, # Check around the parent sphere
+                        cylinder_tracker.recent_cylinders, # Use recently added cylinders
+                        point_tree=point_tree,
+                        eps=params['eps_cylinder'], device=params['device'], batch_size=10**5
+                    )
+                    # Identify points removed specifically by cylinder segmentation
+                    # These are points that were True in mask_to_check_for_cyl but are False in updated_mask_after_cyl
+                    removed_by_cyl_mask = mask_to_check_for_cyl & ~updated_mask_after_cyl
 
-                 cylinder_tracker.recent_cylinders = [] # Clear recent list regardless
+                cylinder_tracker.recent_cylinders = [] # Clear recent list regardless
 
-            # Combine points removed by sphere assignment AND cylinder proximity
-            all_removed_indices = np.union1d(newly_segmented_indices, removed_by_cyl)
+            mask_of_all_removed = newly_segmented_by_sphere_mask | removed_by_cyl_mask
 
-            # --- Sanity Check 1: Check if *any* points were removed ---
-            if generated_new_sphere_from_current and all_removed_indices.size == 0:
-                 print(f"WARNING: Sphere {current_sphere.center} generated children but no points removed in segmentation update. Newly segmented={len(newly_segmented_indices)}, Removed by Cyl={len(removed_by_cyl)}")
-                 # Consider adding a mechanism here to mark current_sphere as outer or skip adding children if this happens repeatedly
-
-            # Update the main unsegmented list by removing these indices using sets
-            current_unsegmented_set = set(unsegmented_points)
-            original_count = len(current_unsegmented_set)
-            current_unsegmented_set.difference_update(all_removed_indices)
-            new_count = len(current_unsegmented_set)
-
-            # --- Sanity Check 2: Check if count actually decreased ---
-            #if generated_new_sphere_from_current and new_count == original_count and all_removed_indices.size > 0 :
-            #    print(f"WARNING: Indices were identified for removal ({len(all_removed_indices)}), but unsegmented_points count did not decrease!")
-
-            unsegmented_points = np.array(list(current_unsegmented_set), dtype=int)
+            # --- Refined Sanity Check ---
+            # Check if points were identified for removal AND if the mask actually changes
+            if generated_new_sphere_from_current and np.any(mask_of_all_removed):
+                # Store the mask *before* the update
+                unsegmented_mask_before_update = unsegmented_mask.copy()
+                # Apply the update
+                unsegmented_mask &= ~mask_of_all_removed
+                # Check if *any* change occurred specifically due to this update
+                if np.array_equal(unsegmented_mask_before_update, unsegmented_mask):
+                    # This is a more precise warning: points were identified, but the mask didn't change.
+                    print(f"WARNING: Sphere {current_sphere.center} generated children, identified points to remove, but global unsegmented_mask did not change in this step (points likely removed by other branches).")
+            else:
+                # Apply the update if no children were generated or no points were identified for removal
+                unsegmented_mask &= ~mask_of_all_removed
 
         elif params['segmentation_type'] == 'sphere':
              # Re-filter based on all assigned IDs so far
-             unsegmented_points = unsegmented_points[segmentation_ids[unsegmented_points] == -1]
+             unsegmented_mask &= (segmentation_ids == -1)
 
 
         if progress_bar is not None:
-            progress_bar.n = progress_bar.total - len(unsegmented_points)
+            progress_bar.n = progress_bar.total - np.sum(unsegmented_mask)
             progress_bar.refresh()
         # --- ID Increment Point (Mirrors original) ---
         # Increment the ID after fully processing current_sphere and its children,
@@ -1597,11 +1558,12 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
     # --- Failsafe for cylinder segmentation (Identical to original) ---
     if not grown_init and params['segmentation_type']=='cylinder':
         if initial_sphere_id_fail_safe is not None:
-            mask = segmentation_ids[unsegmented_points] != initial_sphere_id_fail_safe
-            unsegmented_points = unsegmented_points[mask]
+            # - mask = segmentation_ids[unsegmented_points] != initial_sphere_id_fail_safe
+            # - unsegmented_points = unsegmented_points[mask]
+            unsegmented_mask &= (segmentation_ids != initial_sphere_id_fail_safe) # Update mask
 
             if progress_bar is not None:
-                progress_bar.n = progress_bar.total - len(unsegmented_points)
+                progress_bar.n = progress_bar.total - np.sum(unsegmented_mask)
                 progress_bar.refresh()
 
     cluster.get_outer_spheres() # Final update
@@ -1611,7 +1573,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
     # Return the cluster, the *next available* sphere_id, updated segmentation array,
     # and the final unsegmented_points array.
-    return cluster, current_sphere_id, segmentation_ids, unsegmented_points
+    return cluster, current_sphere_id, segmentation_ids, unsegmented_mask
 
 
 def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points, segmentation_ids, cylinder_tracker: CylinderTracker, params, logger=None):
@@ -1681,7 +1643,7 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
     return connected_clusters
 
     
-def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker: CylinderTracker, params, clusters, point_tree, progress_bar=None, logger=None ):
+def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_mask: np.ndarray, cylinder_tracker: CylinderTracker, params, clusters, point_tree, progress_bar=None, logger=None ):
     """
     Grows a cluster from an initial sphere using priority-based sphere expansion.
     Handles finding nearby branches and merging.
@@ -1692,14 +1654,14 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
 
     # Step 1: Create initial main cluster using the priority-based method
     # Pass the starting sphere ID for this cluster. Cluster points returns the *next* available ID.
-    main_cluster, next_sphere_id, segmentation_ids, unsegmented_points = cluster_points_priority(
-        points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params, point_tree=point_tree, progress_bar=progress_bar, logger=logger
+    main_cluster, next_sphere_id, segmentation_ids, unsegmented_mask = cluster_points_priority(
+        points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_mask, cylinder_tracker, params, point_tree=point_tree, progress_bar=progress_bar, logger=logger
     )
 
 
     # If the initial sphere didn't yield a valid cluster, just return
     if not main_cluster.spheres:
-        return next_sphere_id, segmentation_ids, unsegmented_points
+        return next_sphere_id, segmentation_ids, unsegmented_mask
 
     # --- Branch Finding and Merging Loop (largely unchanged logic) ---
     search_radius = params['smallest_search_radius']
@@ -1721,16 +1683,47 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
             if outer_sphere in processed_outer_spheres_in_iteration or not outer_sphere.is_outer:
                  continue
 
-            neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius, point_tree=point_tree)
+            # neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius, point_tree=point_tree)
+            neighborhood_indices = find_neighborhood_points(points, unsegmented_mask, outer_sphere, search_radius=search_radius, point_tree=point_tree)
 
             # Find and grow new clusters from the neighborhood
-            while neighborhood_points.size >= params.get('min_growth_points', 5): # Ensure enough points for a seed
-                seed_sphere = find_seed_sphere(points, neighborhood_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree, sphere_thickness_type=params["sphere_thickness_type"], logger=logger) # Pass thickness_type
+            # while neighborhood_points.size >= params.get('min_growth_points', 5): # Ensure enough points for a seed
+            while len(neighborhood_indices) >= params.get('min_growth_points', 5):
+                seed_sphere = find_seed_sphere(points, neighborhood_indices, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree, sphere_thickness_type=params["sphere_thickness_type"], logger=logger) # Pass thickness_type
 
                 # Grow the new cluster using the priority method
                 # Start its IDs from the current 'next_sphere_id'
-                new_cluster, next_sphere_id_after_branch, segmentation_ids, unsegmented_points = cluster_points_priority(
-                    points, next_sphere_id, seed_sphere, segmentation_ids, unsegmented_points, cylinder_tracker, params, point_tree=point_tree, progress_bar=progress_bar, logger=logger)
+                # ---> ADDED: Assign points and calculate spread for the new seed sphere <---
+                # Assign points using the *current global* unsegmented_mask
+                seed_sphere.assign_points(points, unsegmented_mask, params['device'], point_tree)
+
+                # Check if the seed sphere actually captured enough *unsegmented* points
+                if len(seed_sphere.contained_points) < params['min_growth_points']:
+                     # If not enough points, mark these contained points as segmented (ignore)
+                     # and try finding another seed in the *remaining* neighborhood indices.
+                     if seed_sphere.contained_points.size > 0:
+                          unsegmented_mask[seed_sphere.contained_points] = False
+                          if progress_bar: # Update progress bar
+                              progress_bar.n = progress_bar.total - np.sum(unsegmented_mask)
+                              progress_bar.refresh()
+                     # Remove the failed seed point's index and contained points' indices from the current neighborhood list
+                     failed_seed_and_contained = np.union1d(np.array([points.tolist().index(seed_sphere.center.tolist())] if seed_sphere.center.tolist() in points.tolist() else []), # Get index of seed center robustly
+                                                             seed_sphere.contained_points)
+                     neighborhood_indices = np.setdiff1d(neighborhood_indices, failed_seed_and_contained, assume_unique=True)
+                     continue # Try next seed in the reduced neighborhood
+
+                # Calculate spread *after* assigning points
+                if seed_sphere.contained_points.size > 0:
+                     seed_sphere.spread = compute_spread_of_points(points[seed_sphere.contained_points])
+                else:
+                     seed_sphere.spread = 0.01 # Fallback spread
+
+                # ---> END ADDED SECTION <---
+
+                # Grow the new cluster using the priority method, passing the mask
+                new_cluster, next_sphere_id_after_branch, segmentation_ids, unsegmented_mask = cluster_points_priority(
+                    points, next_sphere_id, seed_sphere, segmentation_ids, unsegmented_mask, cylinder_tracker, params, point_tree=point_tree, progress_bar=progress_bar, logger=logger
+                )
 
                 next_sphere_id = next_sphere_id_after_branch # Update the global ID counter
 
@@ -1738,7 +1731,7 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
                     newly_found_clusters_in_radius.append(new_cluster)
                 
                 # Update neighborhood points based on remaining unsegmented points
-                neighborhood_points = find_neighborhood_points(points, unsegmented_points, outer_sphere, search_radius=search_radius, point_tree=point_tree)
+                neighborhood_indices = find_neighborhood_points(points, unsegmented_mask, outer_sphere, search_radius=search_radius, point_tree=point_tree)
             
             # Attempt to connect the newly found clusters in this radius iteration to the current outer sphere
             connected_clusters = connect_branch_to_main(
@@ -1764,7 +1757,7 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
         search_radius += params['search_radius_step']
         
         # Optimization: If no unsegmented points left, break early
-        if unsegmented_points.size == 0:
+        if np.sum(unsegmented_mask) == 0:
             break
 
 
@@ -1772,7 +1765,7 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
     clusters.append(main_cluster)
     
     # Return the *next* available sphere ID, updated segmentation, and remaining unsegmented points
-    return next_sphere_id, segmentation_ids, unsegmented_points
+    return next_sphere_id, segmentation_ids, unsegmented_mask
 
 
 
@@ -1959,7 +1952,7 @@ def fitQSM_DepthFirst(
     if debug: logger.info("Step 2: Init params and arrays")
     num_points = len(points)
     segmentation_ids = -np.ones(num_points, dtype=int)
-    unsegmented_points = np.arange(num_points)
+    unsegmented_mask = np.ones(num_points, dtype=bool)
 
     clusters = []
     current_cluster_id = 0 # Use this to assign IDs to *clusters* (or the initial growth phase)
@@ -2004,13 +1997,17 @@ def fitQSM_DepthFirst(
 
     point_tree = cKDTree(points)
 
-    if verbose: print(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
-    if debug: logger.info(f"Step 3: Create clusters\nNumber of points to be segmented: {len(unsegmented_points)}")
+    if verbose: print(f"Step 3: Create clusters\nNumber of points to be segmented: {np.sum(unsegmented_mask)}")
+    if debug: logger.info(f"Step 3: Create clusters\nNumber of points to be segmented: {np.sum(unsegmented_mask)}")
     # --- Create the progress bar ---
     progress_bar = None
     if verbose:
         progress_bar = tqdm(total=num_points, desc="Clustering Progress", unit="points")
-    last_unsegmented_count = num_points
+        # Initialize progress bar state based on mask
+        progress_bar.n = num_points - np.sum(unsegmented_mask)
+        progress_bar.refresh()
+    # - last_unsegmented_count = num_points
+    last_unsegmented_count = np.sum(unsegmented_mask) # Use sum of mask
 
     try:
         initial_sphere = initialize_first_sphere(points, slice_height=0.2, sphere_thickness=params['sphere_thickness'], sphere_thickness_type=params['sphere_thickness_type'])
@@ -2024,64 +2021,84 @@ def fitQSM_DepthFirst(
 
         # Start the first cluster growth
         # Pass the starting cluster ID (0)
-        next_cluster_id, segmentation_ids, unsegmented_points = grow_cluster(
-                points, current_cluster_id, initial_sphere, segmentation_ids, unsegmented_points,
+        next_cluster_id, segmentation_ids, unsegmented_mask = grow_cluster(
+                points, current_cluster_id, initial_sphere, segmentation_ids, unsegmented_mask, # Pass mask
                 cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree, progress_bar=progress_bar, logger=logger
         )
-        current_cluster_id = next_cluster_id # Update the ID for the next cluster
+        current_cluster_id = next_cluster_id
 
         # Update progress bar
-        if verbose: progress_bar.n = num_points - len(unsegmented_points)
+        current_unsegmented_count = np.sum(unsegmented_mask) # Use sum
+        if verbose: progress_bar.n = num_points - current_unsegmented_count
         if verbose: progress_bar.refresh()
-        last_unsegmented_count = len(unsegmented_points)
+        last_unsegmented_count = current_unsegmented_count
 
 
         # Loop to find and grow subsequent clusters (branches/trees missed initially)
-        while unsegmented_points.size > params.get('min_points_absolute_stop', 0): # Stop if few points left
+        while np.sum(unsegmented_mask) > params.get('min_points_absolute_stop', 0): # Stop if few points left
             
-            # Find a seed in the remaining points
-            new_seed_sphere = find_seed_sphere(points, unsegmented_points, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree, sphere_thickness_type=params['sphere_thickness_type'], logger=logger) # Pass thickness type
+            # Find potential seed indices from the *current* unsegmented points
+            potential_seed_indices = np.where(unsegmented_mask)[0]
+            if potential_seed_indices.size == 0:
+                 break # Exit if no unsegmented points left to seed from
             
+            try:
+                new_seed_sphere = find_seed_sphere(points, potential_seed_indices, params['sphere_radius'], params['sphere_thickness'], sphere_thickness_type=params['sphere_thickness_type'], logger=logger)
+            except ValueError as e:
+                if logger: logger.warning(f"Could not create subsequent seed sphere: {e}")
+                break # Stop if no more seeds can be found
+
             # Check if seed sphere captures enough points *before* calling grow_cluster
-            new_seed_sphere.assign_points(points, unsegmented_points, params['device'], point_tree)
+            new_seed_sphere.assign_points(points, unsegmented_mask, params['device'], point_tree)
 
             if new_seed_sphere.contained_points.size < params['min_growth_points']:
                 segmentation_ids[new_seed_sphere.contained_points] = -2 # Mark as ignored
-                unsegmented_points_set = set(unsegmented_points)
-                unsegmented_points_set.difference_update(new_seed_sphere.contained_points)
-                unsegmented_points = np.array(list(unsegmented_points_set), dtype=int)
                 
-                # Update progress bar slightly
+                if new_seed_sphere.contained_points.size > 0: # Check if any points to update
+                     unsegmented_mask[new_seed_sphere.contained_points] = False # Update mask
+
+                current_unsegmented_count = np.sum(unsegmented_mask) # Use sum
                 if progress_bar is not None:
-                    progress_bar.n = num_points - len(unsegmented_points)
+                    progress_bar.n = num_points - current_unsegmented_count
                     progress_bar.refresh()
-                
-                if len(unsegmented_points) == last_unsegmented_count:
+
+                if current_unsegmented_count == last_unsegmented_count:
+                        if logger: logger.warning("Stalled finding seed sphere, breaking.")
                         break # Safety break
-                last_unsegmented_count = len(unsegmented_points)
+                last_unsegmented_count = current_unsegmented_count
                 continue # Try finding another seed
 
-            # Grow cluster from the new seed
-            # Pass the current cluster ID
-            next_cluster_id_after_grow, segmentation_ids, unsegmented_points = grow_cluster(
-                points, current_cluster_id, new_seed_sphere, segmentation_ids, unsegmented_points,
+
+            # ---> ADDED: Calculate spread for the valid seed sphere <---
+            if new_seed_sphere.contained_points.size > 0:
+                 new_seed_sphere.spread = compute_spread_of_points(points[new_seed_sphere.contained_points])
+            else:
+                 new_seed_sphere.spread = 0.01 # Fallback
+
+            # Grow cluster from the new seed, pass/receive mask (approx. line 2010):
+            next_cluster_id_after_grow, segmentation_ids, unsegmented_mask = grow_cluster(
+                points, current_cluster_id, new_seed_sphere, segmentation_ids, unsegmented_mask, # Pass mask
                 cylinder_tracker=cylinder_tracker, params=params, clusters=clusters, point_tree=point_tree, progress_bar=progress_bar, logger=logger
             )
-            current_cluster_id = next_cluster_id_after_grow # Update for the next potential cluster
+            current_cluster_id = next_cluster_id_after_grow
 
-            # Update progress bar
+            # Update progress bar and count (approx. lines 2016-2018):
+            current_unsegmented_count = np.sum(unsegmented_mask) # Use sum
             if progress_bar is not None:
-                progress_bar.n = num_points - len(unsegmented_points)
+                progress_bar.n = num_points - current_unsegmented_count
                 progress_bar.refresh()
-            
-            # Check if progress is stalled
-            if len(unsegmented_points) == last_unsegmented_count:
-                segmentation_ids[unsegmented_points] = -2 # Mark remaining as ignored
-                if verbose: unsegmented_points = np.array([], dtype=int) # Empty the array
-                if verbose: progress_bar.n = num_points # Update progress to full
-                progress_bar.refresh()
+
+            # Check for stall condition (approx. lines 2021-2026):
+            if current_unsegmented_count == last_unsegmented_count:
+                segmentation_ids[unsegmented_mask] = -2 # Mark remaining as ignored using mask
+                if verbose: print("Stalled clustering progress, breaking.")
+                if logger: logger.warning("Stalled clustering progress, breaking.")
+                # unsegmented_mask[:] = False # Empty the mask
+                if progress_bar is not None:
+                    progress_bar.n = num_points # Update progress to full
+                    progress_bar.refresh()
                 break # Exit loop if stalled
-            last_unsegmented_count = len(unsegmented_points)
+            last_unsegmented_count = current_unsegmented_count
 
 
     except ValueError as e:
