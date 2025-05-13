@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import torch
 import os
-import laspy
 import functools
 from scipy.optimize import curve_fit
 
@@ -179,52 +178,75 @@ def cuda_cast(func):
 
 # Loading and writing
 
+# --- Module-level laspy import and check ---
+try:
+    import laspy
+    HAS_LASPY = True
+except ImportError:
+    HAS_LASPY = False
+    print("WARNING: laspy library not found. LAZ/LAS file support will be disabled.")
+# ---
+
 def load_cloud(path):
-    try:
-        import laspy
-        HAS_LASPY = True
-    except ImportError:
-        HAS_LASPY = False
-        print("WARNING: laspy not found. LAZ file support disabled.")
-    """Loads a point cloud from npy, txt, or laz file."""
+    """Loads a point cloud from npy, txt, laz, or las file, returning XYZ coordinates."""
     points = None
     ext = os.path.splitext(path)[1].lower()
+
     try:
         if ext == ".npy":
             points = np.load(path)
+            if points.ndim == 1: # Handle case where npy might be a flat list of coords
+                try:
+                    points = points.reshape(-1, 3) # Attempt to reshape
+                except ValueError:
+                    print(f"ERROR: .npy file {path} is 1D and not reshapeable to (N,3). Shape: {points.shape}")
+                    return None
+
         elif ext == ".txt":
             try:
+                # Try space, then comma. Adjust if other delimiters are common.
                 points = np.loadtxt(path, delimiter=' ')
             except ValueError:
-                points = np.loadtxt(path, delimiter=',')
-            except Exception as load_err: # Catch other potential loading errors
+                try:
+                    points = np.loadtxt(path, delimiter=',')
+                except ValueError:
+                    print(f"ERROR: Could not parse TXT {path} with space or comma delimiter.")
+                    return None
+            except Exception as load_err:
                  print(f"ERROR loading TXT {path}: {load_err}")
+                 traceback.print_exc()
                  return None
+
         elif ext in [".laz", ".las"]:
             if HAS_LASPY:
                 with laspy.open(path) as f:
-                    points = np.vstack((f.x, f.y, f.z)).T
+                    # For laspy 2.0+
+                    las_data = f.read()
+                    points = np.vstack((las_data.x, las_data.y, las_data.z)).T
             else:
-                print(f"ERROR: Cannot load {path}. laspy not installed.")
+                print(f"ERROR: Cannot load {path}. laspy is not installed or import failed.")
                 return None
         else:
             print(f"ERROR: Unsupported file format: {ext} for {path}")
             return None
 
-        if points is not None and points.ndim == 2 and points.shape[1] >= 3:
-            return points[:, :3]
-        elif points is not None:
-             print(f"ERROR: Loaded data from {path} has unexpected shape: {points.shape}")
-             return None
+        # Validate and return only XYZ
+        if points is not None:
+            if points.ndim == 2 and points.shape[1] >= 3:
+                return points[:, :3].astype(np.float32) # Standardize to float32
+            else:
+                print(f"ERROR: Loaded data from {path} has unexpected shape after processing: {points.shape}. Expected (N, >=3).")
+                return None
         else:
-             # Loading failed, error likely already printed
-             return None
+            # Loading failed or produced None, error likely already printed
+            return None
 
     except FileNotFoundError:
         print(f"ERROR: File not found: {path}")
         return None
     except Exception as e:
         print(f"ERROR: Failed to load point cloud from {path}: {e}")
+        traceback.print_exc() # Print full traceback for unexpected errors
         return None
 
 def save_cloud(data, path, save_type="npy"):
