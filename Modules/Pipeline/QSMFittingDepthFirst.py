@@ -14,7 +14,6 @@ import logging
 import io
 import heapq
 import itertools
-import numba
 
 
 
@@ -1193,7 +1192,6 @@ def cylinder_proximity_based_segmentation(points, input_unsegmented_mask, query_
 
     return output_mask
 
-
 def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere, segmentation_ids: np.ndarray, unsegmented_mask: np.ndarray, cylinder_tracker: CylinderTracker, params: dict, point_tree, progress_bar=None, logger=None):    
     """
     Perform sphere-following clustering using a priority queue based on sphere spread.
@@ -1280,6 +1278,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
     # --- Main Loop using Priority Queue (Replaces BFS while True loop) ---
     while pq:
+        print(f"Current pq size: {len(pq)}")
         # Get the sphere with the highest priority (largest spread)
         priority, unique_id, current_sphere = heapq.heappop(pq)
 
@@ -1642,7 +1641,7 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
 
     return connected_clusters
 
-    
+@profile 
 def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_mask: np.ndarray, cylinder_tracker: CylinderTracker, params, clusters, point_tree, progress_bar=None, logger=None ):
     """
     Grows a cluster from an initial sphere using priority-based sphere expansion.
@@ -1910,7 +1909,6 @@ def setup_logger(name, log_file, level=logging.INFO):
         logger.addHandler(fh)
 
     return logger
-
 
 def fitQSM_DepthFirst(
     cloud_data: np.ndarray, # Takes numpy array
