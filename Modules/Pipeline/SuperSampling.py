@@ -125,7 +125,8 @@ def superSample(
     min_height: float = 0.0, # Changed from 20 based on your example usage
     use_only_original: bool = True,
     save_output: bool = False, # Flag to control saving
-    cloud_save_type: str = "npy" # Format if saving
+    cloud_save_type: str = "npy",
+    max_points_for_full_supersample: int = 1000000 # New parameter
 ) -> np.ndarray:
     """
     Performs super sampling on the input point cloud data, optionally saves,
@@ -149,6 +150,11 @@ def superSample(
     points_above_threshold = data[mask]
     points_below_threshold = data[~mask]
 
+    # This is the number of points that will actively generate new points in each iteration
+    # if use_only_original is True.
+    # If use_only_original is False, this is the starting base for the growing set.
+    original_num_points = len(points_above_threshold)
+
     if len(points_above_threshold) < k:
         print(f"  Skipping super sampling for {base_file_name}: Not enough points ({len(points_above_threshold)}) above height {height_threshold:.2f}.")
         # If skipping, decide whether to save the *unmodified* input if save_output is True
@@ -159,12 +165,25 @@ def superSample(
              save_cloud(data, output_path, cloud_save_type)
         return data # Return original data
 
+    _number_of_points_after_iteration = original_num_points
+    needed_iterations = 0
+    while _number_of_points_after_iteration < max_points_for_full_supersample:
+        if use_only_original:
+            _number_of_points_after_iteration += original_num_points
+        else:
+            _number_of_points_after_iteration *= 2
+        needed_iterations += 1
+
+    if needed_iterations == 0:
+        print(f"Cloud Length of {len(data)} already over {max_points_for_full_supersample}, Skipping Upsampling")
+        return data
+
     # (The rest of your super sampling logic remains the same, using points_above_threshold, etc.)
     new_points_all = []
     if use_only_original:
         original_points = points_above_threshold.copy()
         points_for_query = original_points.copy()
-        for i in range(iterations):
+        for i in range(min(iterations, needed_iterations)): # Maximum number of iterations is predefined number
             iter_new_points = []
             if len(points_for_query) < 2: break
             tree = cKDTree(points_for_query)
@@ -198,7 +217,7 @@ def superSample(
 
     else: # Standard method (updating points_to_sample)
         points_to_sample = points_above_threshold.copy()
-        for i in range(iterations):
+        for i in range(min(iterations, needed_iterations)):
             iter_new_points = []
             if len(points_to_sample) < 2: break
             tree = cKDTree(points_to_sample)
