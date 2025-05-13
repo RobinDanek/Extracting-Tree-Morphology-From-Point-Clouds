@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 from collections import defaultdict
 from fastprogress.fastprogress import progress_bar
 import json
+from Modules.Utils import load_cloud
 
 import os
 
@@ -45,7 +46,7 @@ class RasterizedTreeSet_Flattened(Dataset):
         # Load raster and store metadata
         data_path = self.data_paths[idx]
 
-        data = np.load(data_path)
+        data = load_cloud(data_path)
         points, offsets, features, point_ids = (
             torch.from_numpy(data[:, :3]).float(),
             torch.from_numpy(data[:, 3:6]).float(),
