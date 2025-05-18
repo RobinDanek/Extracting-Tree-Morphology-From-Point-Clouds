@@ -1278,7 +1278,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
     # --- Main Loop using Priority Queue (Replaces BFS while True loop) ---
     while pq:
-        print(f"Current pq size: {len(pq)}")
         # Get the sphere with the highest priority (largest spread)
         priority, unique_id, current_sphere = heapq.heappop(pq)
 
@@ -1641,7 +1640,7 @@ def connect_branch_to_main(queried_sphere, stem_cluster, branch_clusters, points
 
     return connected_clusters
 
-@profile 
+
 def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unsegmented_mask: np.ndarray, cylinder_tracker: CylinderTracker, params, clusters, point_tree, progress_bar=None, logger=None ):
     """
     Grows a cluster from an initial sphere using priority-based sphere expansion.
@@ -1705,10 +1704,11 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
                           if progress_bar: # Update progress bar
                               progress_bar.n = progress_bar.total - np.sum(unsegmented_mask)
                               progress_bar.refresh()
+
                      # Remove the failed seed point's index and contained points' indices from the current neighborhood list
-                     failed_seed_and_contained = np.union1d(np.array([points.tolist().index(seed_sphere.center.tolist())] if seed_sphere.center.tolist() in points.tolist() else []), # Get index of seed center robustly
-                                                             seed_sphere.contained_points)
-                     neighborhood_indices = np.setdiff1d(neighborhood_indices, failed_seed_and_contained, assume_unique=True)
+                    #  failed_seed_and_contained = np.union1d(np.array([points.tolist().index(seed_sphere.center.tolist())] if seed_sphere.center.tolist() in points.tolist() else []), # Get index of seed center robustly
+                    #                                          seed_sphere.contained_points)
+                     neighborhood_indices = np.setdiff1d(neighborhood_indices, seed_sphere.contained_points.astype(int), assume_unique=True)
                      continue # Try next seed in the reduced neighborhood
 
                 # Calculate spread *after* assigning points

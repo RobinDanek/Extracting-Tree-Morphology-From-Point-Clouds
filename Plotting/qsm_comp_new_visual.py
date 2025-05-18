@@ -58,7 +58,7 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
                 if view == 'z' and slice_index == 0:
                     center_x = (row['startX'] + row['endX']) / 2
                     center_y = (row['startY'] + row['endY']) / 2
-                    circle = plt.Circle((center_x, center_y), r, color='gray', alpha=0.5, edgecolor='black')
+                    circle = plt.Circle((center_x, center_y), r, color='grey', alpha=0.5, edgecolor='black')
                     ax.add_patch(circle)
                     continue
 
