@@ -111,7 +111,7 @@ def rasterize_clouds(data_paths, json_path, raster_size, stride, store_metadata)
                 raster_metadata[tree_id] = {"rasters": [], "path": cloud_path}
 
         # Read cloud and create indices of points for later reconstruction of rasters into the original cloud
-        cloud = np.load(cloud_path)
+        cloud = load_cloud(cloud_path)
         points = cloud[:,:3]
         point_indices = np.arange(len(cloud))
 
