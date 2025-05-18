@@ -149,13 +149,13 @@ def run_pipeline(
                         cloud_save_type=cloud_save_type    # Pass save format
                     )
                 elif model_type=="no_model":
-                    current_cloud_data = load_cloud( cloud_path )
+                    current_cloud_data = load_cloud( cloud_path )[:,:3]
                 else:
                     raise Exception("specify either treelearn, pointtransformerv3 or pointnet2,  or no_model")
             else:
                  # If prediction/denoising is off, load the cloud manually for subsequent steps
                  print("  Skipping Prediction/Denoising Step. Loading cloud directly...")
-                 current_cloud_data = load_cloud(cloud_path)
+                 current_cloud_data = load_cloud(cloud_path)[:,:3]
 
             if current_cloud_data is None:
                 print(f"  Skipping remaining steps for {base_filename} due to error or empty cloud in prediction/loading phase.")

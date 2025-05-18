@@ -32,7 +32,7 @@ def makePredictionsSingle(
 
     if not predict_offset and not denoise:
         # If no model processing needed, just load and return
-        cloud_data = load_cloud(cloud_path)
+        cloud_data = load_cloud(cloud_path)[:,:3]
         # No saving happens here unless specifically added later.
         # This branch assumes we only save if models were *applied*.
         return cloud_data
@@ -188,7 +188,7 @@ def makePredictionsRasterized(
 
     if not predict_offset and not denoise:
         # If no model processing needed, just load and return
-        cloud_data = load_cloud(cloud_path)
+        cloud_data = load_cloud(cloud_path)[:,:3]
         # No saving happens here unless specifically added later.
         # This branch assumes we only save if models were *applied*.
         return cloud_data
@@ -208,7 +208,7 @@ def makePredictionsRasterized(
 
         for tree in dataloader:
             # Load original coordinates
-            original_coords = load_cloud(cloud_path)
+            original_coords = load_cloud(cloud_path)[:,:3]
             tree_path = cloud_path
 
             # Build file names:
