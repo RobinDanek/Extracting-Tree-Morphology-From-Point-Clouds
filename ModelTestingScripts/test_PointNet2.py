@@ -27,7 +27,7 @@ def perform_test(offset_model, noise_model):
 
     model_dict = load_model(model_type="pointnet2", offset_model_dir=offset_model_dir, noise_model_dir=noise_model_dir)
 
-    nn_eval(model_dict, model_type="pointnet2", rasterized_data=True, plot_savedir=plot_savedir, load_data=True)
+    nn_eval(model_dict, model_type="pointnet2", rasterized_data=True, plot_savedir=plot_savedir, load_data=False)
 
 if __name__ == "__main__":
 
