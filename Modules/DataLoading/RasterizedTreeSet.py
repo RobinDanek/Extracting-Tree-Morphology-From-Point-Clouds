@@ -203,7 +203,7 @@ class RasterizedTreeSet_Hierarchical(Dataset):
         tree_info = self.data[self.tree_keys[idx]]
 
         # Load the full cloud for the tree (if needed for aggregation later)
-        data = np.load(tree_info["path"])
+        data = load_cloud(tree_info["path"])
 
         if data.shape[1] == 3: # e.g. plain XYZ → 3 columns
             pad_cols = 8
