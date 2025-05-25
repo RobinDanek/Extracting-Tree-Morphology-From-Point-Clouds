@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import os
 
+from Modules.Utils import load_cloud
+
 def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bounds, viewFrom, save_path=None):
 
     plt.rcParams.update({'font.size': 14})
@@ -36,54 +38,100 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
             else:  # 'x'
                 return points[:, [1, 2]]
 
-        def draw_cylinders(ax, cylinders, slice_index):
+        def draw_cylinders(ax, cylinders, slice_index, colored=False):
             for _, row in cylinders.iterrows():
                 # Filter: only include cylinders intersecting the slice volume
-                start_in_bounds = (
-                    xmin <= row['startX'] <= xmax and
-                    ymin <= row['startY'] <= ymax and
-                    zmin <= row['startZ'] <= zmax
-                )
-                end_in_bounds = (
-                    xmin <= row['endX'] <= xmax and
-                    ymin <= row['endY'] <= ymax and
-                    zmin <= row['endZ'] <= zmax
-                )
+                try:
+                    start_in_bounds = (
+                        xmin <= row['startX'] <= xmax and
+                        ymin <= row['startY'] <= ymax and
+                        zmin <= row['startZ'] <= zmax
+                    )
+                    end_in_bounds = (
+                        xmin <= row['endX'] <= xmax and
+                        ymin <= row['endY'] <= ymax and
+                        zmin <= row['endZ'] <= zmax
+                    )
+                except:
+                    start_in_bounds = (
+                        xmin <= row['start_x'] <= xmax and
+                        ymin <= row['start_y'] <= ymax and
+                        zmin <= row['start_z'] <= zmax
+                    )
+                    end_in_bounds = (
+                        xmin <= row['end_x'] <= xmax and
+                        ymin <= row['end_y'] <= ymax and
+                        zmin <= row['end_z'] <= zmax
+                    )
                 if not (start_in_bounds or end_in_bounds):
                     continue
 
                 r = row['radius']
 
                 # Special case: top-down view in first column – draw as circles
-                if view == 'z' and slice_index == 0:
-                    center_x = (row['startX'] + row['endX']) / 2
-                    center_y = (row['startY'] + row['endY']) / 2
-                    circle = plt.Circle((center_x, center_y), r, color='grey', alpha=0.5, edgecolor='black')
-                    ax.add_patch(circle)
-                    continue
+                try:
+                    if view == 'z' and slice_index == 0:
+                        center_x = (row['startX'] + row['endX']) / 2
+                        center_y = (row['startY'] + row['endY']) / 2
+                        circle = plt.Circle((center_x, center_y), r, facecolor='grey', alpha=0.5, edgecolor='black')
+                        ax.add_patch(circle)
+                        continue
 
-                if view == 'z':
-                    start = np.array([row['startX'], row['startY']])
-                    end = np.array([row['endX'], row['endY']])
-                elif view == 'y':
-                    cx = (xmin + xmax) / 2
-                    cy = (ymin + ymax) / 2
-                    theta = np.radians(45)
-                    rot = np.array([
-                        [np.cos(theta), -np.sin(theta)],
-                        [np.sin(theta),  np.cos(theta)]
-                    ])
-                    start_xy = np.array([row['startX'], row['startY']]) - [cx, cy]
-                    end_xy = np.array([row['endX'], row['endY']]) - [cx, cy]
+                    if view == 'z':
+                        start = np.array([row['startX'], row['startY']])
+                        end = np.array([row['endX'], row['endY']])
+                    elif view == 'y':
+                        cx = (xmin + xmax) / 2
+                        cy = (ymin + ymax) / 2
+                        theta = np.radians(45)
+                        rot = np.array([
+                            [np.cos(theta), -np.sin(theta)],
+                            [np.sin(theta),  np.cos(theta)]
+                        ])
+                        start_xy = np.array([row['startX'], row['startY']]) - [cx, cy]
+                        end_xy = np.array([row['endX'], row['endY']]) - [cx, cy]
 
-                    start_rotated = start_xy @ rot.T
-                    end_rotated = end_xy @ rot.T
+                        start_rotated = start_xy @ rot.T
+                        end_rotated = end_xy @ rot.T
 
-                    start = np.array([start_rotated[0], row['startZ']])
-                    end = np.array([end_rotated[0], row['endZ']])
-                else:  # 'x'
-                    start = np.array([row['startY'], row['startZ']])
-                    end = np.array([row['endY'], row['endZ']])
+                        start = np.array([start_rotated[0], row['startZ']])
+                        end = np.array([end_rotated[0], row['endZ']])
+                    else:  # 'x'
+                        start = np.array([row['startY'], row['startZ']])
+                        end = np.array([row['endY'], row['endZ']])
+                except:
+                    if view == 'z' and slice_index == 0:
+                        center_x = (row['start_x'] + row['end_x']) / 2
+                        center_y = (row['start_y'] + row['end_y']) / 2
+                        circle = plt.Circle((center_x, center_y), r, facecolor='grey', alpha=0.5, edgecolor='black')
+                        ax.add_patch(circle)
+                        continue
+
+                    if view == 'z':
+                        start = np.array([row['start_x'], row['start_y']])
+                        end = np.array([row['end_x'], row['end_y']])
+                    elif view == 'y':
+                        # cx = (xmin + xmax) / 2
+                        # cy = (ymin + ymax) / 2
+                        # theta = np.radians(45)
+                        # rot = np.array([
+                        #     [np.cos(theta), -np.sin(theta)],
+                        #     [np.sin(theta),  np.cos(theta)]
+                        # ])
+                        # start_xy = np.array([row['start_x'], row['start_y']]) - [cx, cy]
+                        # end_xy = np.array([row['end_x'], row['end_y']]) - [cx, cy]
+
+                        # start_rotated = start_xy @ rot.T
+                        # end_rotated = end_xy @ rot.T
+
+                        # start = np.array([start_rotated[0], row['start_z']])
+                        # end = np.array([end_rotated[0], row['end_z']])
+
+                        start = np.array([row['start_x'], row['start_z']])
+                        end = np.array([row['end_x'], row['end_z']])
+                    else:  # 'x'
+                        start = np.array([row['start_y'], row['start_z']])
+                        end = np.array([row['end_y'], row['end_z']])
 
                 vec = end - start
                 norm = np.linalg.norm(vec)
@@ -97,7 +145,10 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
                 c3 = end - perp * r
                 c4 = end + perp * r
 
-                poly = Polygon([c1, c2, c3, c4], edgecolor='black', facecolor='gray', alpha=0.5)
+                if colored:
+                    poly = Polygon([c1, c2, c3, c4], edgecolor='darkred', facecolor='red', alpha=0.5)
+                else:
+                    poly = Polygon([c1, c2, c3, c4], edgecolor='black', facecolor='gray', alpha=0.5)
                 ax.add_patch(poly)
 
         proj_points = project(slice_points)
@@ -105,7 +156,7 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
         # Top row: original QSM
         ax_top = axes[0, i]
         ax_top.scatter(proj_points[:, 0], proj_points[:, 1], s=1, c='black')
-        draw_cylinders(ax_top, original_cylinders, i)
+        draw_cylinders(ax_top, original_cylinders, i, colored=True)
         ax_top.set_title(f"Slice {i+1}")
         # Hide only spines and ticks, keep labels
         for spine in ['top', 'right', 'bottom', 'left']:
@@ -157,19 +208,19 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
 
 if __name__ == "__main__":
     bounds = [
-        [21.9, 22.25, -20.9, -20.5, -2.8, -2.6],
-        [21, 23, -23, -21.3, 8.3, 8.95],
-        [19.55, 21.1, -19.8, -17.51, 13.12, 13.6],
-        [18.2, 20.7, -25.4, -22.8, 16.5, 17.47],
-        [20.5, 22.4, -21, -19.9, 22.15, 24.7]
+        [-24.3, -23.7, -27.9, -27.3, 5.7, 6.2],
+        [-23.4, -21.8, -27.6, -26, 16.4, 16.6],
+        [-27, -25.6, -25.2, -24.3, 18.85, 19.4],
+        [-24.3, -23.4, -29.15, -28.3, 21.45, 21.9],
+        [-25.4, -24.44, -27.3, -26.68, 25.2, 26.8]
     ]
     viewFrom = ['z', 'z', 'z', 'z', 'y']
 
-    cloud = np.load(os.path.join('data', 'raw', 'cloud', '42_3.npy'))
-    original_cylinders = pd.read_csv(os.path.join('data', 'raw', 'QSM', 'detailed', '42_3_000000.csv'))
+    cloud = load_cloud(os.path.join('data', 'testing', 'qsm_subset', 'pointcloud_backup', 'AEW28_G_57_hTLS.laz'))
+    original_cylinders = pd.read_csv(os.path.join('data', 'testing', 'qsm_subset', 'qsm', 'AEW28_G_57_hTLS_cor.csv'))
     original_cylinders.columns = original_cylinders.columns.str.strip()
-    enhanced_cylinders = pd.read_csv(os.path.join('data', 'pipeline', 'output', 'qsm_subset', 'treelearn', '42_3_labeled_qsm_depth_cylinders.csv'))
+    enhanced_cylinders = pd.read_csv(os.path.join('data', 'testing', 'qsm_subset', 'pipeline_output', 'treelearn', 'AEW28_G_57_hTLS_qsm_depth_cylinders.csv'))
 
-    plot_save_path = os.path.join('plots', 'PipelineEval', 'new_comp_visual.png')
+    plot_save_path = os.path.join('plots', 'PipelineEval', 'new_comp_visual_testset.png')
 
     plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bounds, viewFrom, save_path=plot_save_path)

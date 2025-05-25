@@ -17,6 +17,8 @@ def parse_args():
     parser.add_argument("--testset", action="store_true")
     parser.add_argument("--original_qsms_testing", action="store_true")
     parser.add_argument("--align_qsm_to_cloud", action="store_true")
+    parser.add_argument("--preptest_um", action="store_true")
+    parser.add_argument("--preptest_m", action="store_true")
 
     return parser.parse_args()
 
@@ -30,7 +32,13 @@ if __name__ == "__main__":
         qsm_dir = os.path.join( 'data', 'qsm', args.model, 'original_algo_denoised', 'qsm', 'detailed' )
         projection_dir = os.path.join('data', 'predicted', args.model, 'projected_orig')
     else:
-        if args.testset:
+        if args.preptest_um:
+            qsm_dir = os.path.join( 'data', 'pipeline', 'output', 'qsm_subset', 'noUpsample', 'qsm' )
+            projection_dir = os.path.join( 'data', 'pipeline', 'output', 'qsm_subset', 'noUpsample', 'projected' )
+        elif args.preptest_m:
+            qsm_dir = os.path.join( 'data', 'pipeline', 'output', 'qsm_subset', 'noModelNoUpsample', 'qsm' )
+            projection_dir = os.path.join( 'data', 'pipeline', 'output', 'qsm_subset', 'noModelNoUpsample', 'projected' )
+        elif args.testset:
             if not args.original_qsms_testing:
                 qsm_dir = os.path.join( 'data', 'testing', 'qsm_subset', 'pipeline_output', args.model.lower() )
                 projection_dir = os.path.join('data', 'testing', 'qsm_subset', 'projected_new', args.model)
@@ -45,7 +53,10 @@ if __name__ == "__main__":
     os.makedirs(projection_dir, exist_ok=True)
 
     # Load the list of qsm clouds
-    if not args.testset:
+    if args.preptest_m or args.preptest_um:
+        with open(os.path.join('data', 'labeled', 'offset', 'qsm_set_full_unlabeled.json'), 'r') as f:
+            cloud_list = json.load(f)
+    elif not args.testset:
         with open(os.path.join('data', 'labeled', 'offset', 'qsm_set_full.json'), 'r') as f:
             cloud_list = json.load(f)
     else:

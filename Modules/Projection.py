@@ -285,14 +285,14 @@ def project_clouds(cloudList, cylinderList, labelDir, batch_size=1024, use_featu
     # --- Define Column Mappings ---
     # Internal Name: [List of CSV candidate names, in order of preference]
     QSM_COLUMN_MAPPINGS = {
-        'startX': ['startX', 'start.x'],
-        'startY': ['startY', 'start.y'],
-        'startZ': ['startZ', 'start.z'],
-        'endX': ['endX', 'end.x'],
-        'endY': ['endY', 'end.y'],
-        'endZ': ['endZ', 'end.z'],
-        'radius': ['radius'],  # Assuming 'radius' is consistent or the primary new one
-        'ID': ['ID', 'extension'] # 'ID' is original, 'extension' is new for ID
+        'startX': ['startX', 'start.x', 'start_x'],
+        'startY': ['startY', 'start.y', 'start_y'],
+        'startZ': ['startZ', 'start.z', 'start_z'],
+        'endX': ['endX', 'end.x', 'end_x'],
+        'endY': ['endY', 'end.y', 'end_y'],
+        'endZ': ['endZ', 'end.z', 'end_z'],
+        'radius': ['radius', 'Radius'],  # Assuming 'radius' is consistent or the primary new one
+        'ID': ['ID', 'extension', 'id'] # 'ID' is original, 'extension' is new for ID
     }
     # --- End Column Mappings ---
 
