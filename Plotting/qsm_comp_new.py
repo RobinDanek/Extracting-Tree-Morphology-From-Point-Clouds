@@ -67,6 +67,8 @@ def load_pointwise_distances_testset(original_base_dir, model_base_dir, model_na
         dist_o = get_distances_from_file(orig_file_path)
         dist_m = get_distances_from_file(model_file_path)
 
+        print(f"D for {filename_with_suffix}; o: {np.mean(dist_o)}; m: {np.mean(dist_m)}")
+
         if dist_o is not None and dist_m is not None:
             if len(dist_o) == len(dist_m):
                 if len(dist_o) > 0: # Ensure not empty after loading

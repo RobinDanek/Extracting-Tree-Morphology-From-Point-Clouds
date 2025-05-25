@@ -264,7 +264,7 @@ def csv_to_ply_cylinders(csv_filepath, ply_filepath, resolution=10, min_radius_f
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert QSM CSV files in a directory to PLY cylinder meshes, colored by radius.")
     parser.add_argument("--input_dir", type=str, help="Directory containing QSM CSV files.")
-    parser.add_argument("--resolution", type=int, default=10, help="Resolution of the cylinder mesh (number of sides). Default is 10.")
+    parser.add_argument("--resolution", type=int, default=5, help="Resolution of the cylinder mesh (number of sides). Default is 10.")
     parser.add_argument("--min_radius", type=float, default=1e-5, help="Minimum radius for a cylinder to be meshed. Default is 1e-5.")
     
     args = parser.parse_args()

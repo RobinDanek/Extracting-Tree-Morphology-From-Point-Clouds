@@ -209,12 +209,13 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
 if __name__ == "__main__":
     bounds = [
         [-24.3, -23.7, -27.9, -27.3, 5.7, 6.2],
+        [-24.6, -24.4, -28.34, -27.47, 11.55, 12.67],
         [-23.4, -21.8, -27.6, -26, 16.4, 16.6],
-        [-27, -25.6, -25.2, -24.3, 18.85, 19.4],
+        #[-27, -25.6, -25.2, -24.3, 18.85, 19.4],
         [-24.3, -23.4, -29.15, -28.3, 21.45, 21.9],
         [-25.4, -24.44, -27.3, -26.68, 25.2, 26.8]
     ]
-    viewFrom = ['z', 'z', 'z', 'z', 'y']
+    viewFrom = ['z', 'x', 'z', 'z', 'y']
 
     cloud = load_cloud(os.path.join('data', 'testing', 'qsm_subset', 'pointcloud_backup', 'AEW28_G_57_hTLS.laz'))
     original_cylinders = pd.read_csv(os.path.join('data', 'testing', 'qsm_subset', 'qsm', 'AEW28_G_57_hTLS_cor.csv'))
