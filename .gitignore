@@ -12,8 +12,9 @@ ModelSaves/
 setup/
 setup_experimental/
 *.txt
+!requirements.txt
 plots/
-
+Plotting/dummy_qsm_data_dotplot_output
 
 # Ignore setup_gwdg
 setup/setup_gwdg.sh

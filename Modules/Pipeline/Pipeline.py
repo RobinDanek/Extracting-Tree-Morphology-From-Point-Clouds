@@ -3,9 +3,8 @@ import argparse
 from tqdm import tqdm
 import time # For basic profiling/debugging if needed
 
-from .QSMFittingBreadthFirst import fitQSM_BreadthFirst
 from .QSMFittingDepthFirst import fitQSM_DepthFirst
-from .SuperSampling import superSample
+from .Upsampling import upsample
 from .ModelPredicting import makePredictionsSingle, makePredictionsRasterized
 from Modules.Evaluation.ModelLoaders import load_model
 from Modules.Utils import get_device, load_cloud, save_cloud
@@ -31,11 +30,11 @@ def load_models( model_type, predict_offset, denoise, device):
              if predict_offset and offset_model_dir:
                  loaded_offset_model = model_dict.get("O_P3") # Adjust key if needed
                  if loaded_offset_model: loaded_offset_model = loaded_offset_model.to(device).eval()
-                 else: print(f"Warning: Offset model '{offset_model_name}' requested but not loaded/found.")
+                 else: print(f"Warning: Offset model requested but not loaded/found.")
              if denoise and noise_model_dir:
                  loaded_noise_model = model_dict.get("N_P3") # Adjust key if needed
                  if loaded_noise_model: loaded_noise_model = loaded_noise_model.to(device).eval()
-                 else: print(f"Warning: Noise model '{noise_model_name}' requested but not loaded/found.")
+                 else: print(f"Warning: Noise model requested but not loaded/found.")
              print("Models loaded and moved to device.")
         else:
              print("Skipping model loading as no prediction/denoising is requested.")
@@ -47,24 +46,15 @@ def load_models( model_type, predict_offset, denoise, device):
     return loaded_offset_model, loaded_noise_model
 
 
-def run_pipeline(
-        input_dir, output_dir,
-        predict_offset=True, # Renamed from cloud_sharpening
-        denoise=True,
-        model_type="treelearn",
-        super_sampling=True,
-        ss_k=10, ss_iterations=5, ss_min_height=0.0, ss_use_only_original=True,
-        qsm_fitting=True,
-        qsm_type="depth", # "depth" or "breadth"
-        qsm_verbose=False,
-        qsm_debug=False,
-        save_model_predictions=False, # Control saving in makePredictions
-        save_super_sampling=False, # Control saving in superSample
-        save_qsm_cyl_ply=False,   # Control saving in fitQSM_*
-        save_qsm_sphere_ply=False,# Control saving in fitQSM_*
-        save_qsm_cyl_csv=True,    # Control saving in fitQSM_*
-        cloud_save_type="npy" # npy, txt, or laz - used by save steps
-        ):
+def run_pipeline( cfg ):
+
+    input_dir = cfg["general"]["input_dir"]
+    output_dir = cfg["general"]["output_dir"]
+    predict_offset = cfg["stage1"]["predict_offset"]
+    denoise = cfg["stage1"]["denoise"]
+    super_sampling = cfg["stage2"]["upsampling"]
+    model_type = cfg["stage1"]["model_type"]
+    qsm_fitting = cfg["stage3"]["qsm_fitting"]
 
     print("Starting Point Cloud Pipeline (Revised Structure)...")
     # (Keep print statements for options as before)
@@ -72,15 +62,8 @@ def run_pipeline(
     print(f"Output Dir: {output_dir}")
     print(f"--- Options ---")
     print(f"Predict Offset: {predict_offset}, Denoise: {denoise}. (Model: {model_type})")
-    print(f"Super Sampling: {super_sampling} (k={ss_k}, iter={ss_iterations}, min_h={ss_min_height}, only_orig={ss_use_only_original})")
-    print(f"QSM Fitting: {qsm_fitting} (Type: {qsm_type if qsm_fitting else 'N/A'}, Verbose: {qsm_verbose})")
-    print(f"--- Saving ---")
-    print(f"Save Model Pred Output: {save_model_predictions}")
-    print(f"Save Super Sampled Output: {save_super_sampling}")
-    print(f"Intermediate Cloud Format: {cloud_save_type}")
-    print(f"Save QSM Cylinder PLY: {save_qsm_cyl_ply}")
-    print(f"Save QSM Sphere PLY: {save_qsm_sphere_ply}")
-    print(f"Save QSM Cylinder CSV: {save_qsm_cyl_csv}")
+    print(f"Super Sampling: {super_sampling}")
+    print(f"QSM Fitting: {qsm_fitting})")
     print("-" * 20)
 
     os.makedirs(output_dir, exist_ok=True)
@@ -131,10 +114,7 @@ def run_pipeline(
                         outputDir=output_dir, # Pass output dir for optional saving
                         model_offset=loaded_offset_model,
                         model_noise=loaded_noise_model,
-                        predict_offset=predict_offset,
-                        denoise=denoise,
-                        save_output=save_model_predictions, # Pass save flag
-                        cloud_save_type=cloud_save_type    # Pass save format
+                        cfg=cfg
                     )
                 elif model_type=="pointnet2":
                     loaded_offset_model, loaded_noise_model = load_models(model_type, predict_offset, denoise, device)
@@ -143,10 +123,7 @@ def run_pipeline(
                         outputDir=output_dir, # Pass output dir for optional saving
                         model_offset=loaded_offset_model,
                         model_noise=loaded_noise_model,
-                        predict_offset=predict_offset,
-                        denoise=denoise,
-                        save_output=save_model_predictions, # Pass save flag
-                        cloud_save_type=cloud_save_type    # Pass save format
+                        cfg=cfg    # Pass save format
                     )
                 elif model_type=="no_model":
                     current_cloud_data = load_cloud( cloud_path )[:,:3]
@@ -167,16 +144,11 @@ def run_pipeline(
                 if len(current_cloud_data) > 1500000:
                     print("  Skipping super sampling due to large point density")
                 else:
-                    current_cloud_data = superSample(
+                    current_cloud_data = upsample(
                         cloud_data=current_cloud_data,
                         cloud_path=cloud_path, # For naming output file if saved
                         outputDir=output_dir, # For saving output
-                        k=ss_k,
-                        iterations=ss_iterations,
-                        min_height=ss_min_height,
-                        use_only_original=ss_use_only_original,
-                        save_output=save_super_sampling, # Pass save flag
-                        cloud_save_type=cloud_save_type  # Pass save format
+                        cfg=cfg
                     )
                     if current_cloud_data is None:
                         print(f"  Skipping remaining steps for {base_filename} due to error in super sampling.")
@@ -188,31 +160,13 @@ def run_pipeline(
             # STEP 3: QSM Fitting
             if qsm_fitting:
                 print(f"  Running QSM Fitting Step...\nCloud size {len(current_cloud_data)}")
-                if qsm_type == "depth":
-                    fitQSM_DepthFirst(
-                        cloud_data=current_cloud_data,
-                        cloud_path=cloud_path, # For naming outputs
-                        outputDir=output_dir,
-                        save_cyl_ply=save_qsm_cyl_ply,
-                        save_sphere_ply=save_qsm_sphere_ply,
-                        save_csv=save_qsm_cyl_csv,
-                        verbose=qsm_verbose,
-                        device=device,
-                        debug=qsm_debug
-                    )
-                elif qsm_type == "breadth":
-                    fitQSM_BreadthFirst(
-                        cloud_data=current_cloud_data,
-                        cloud_path=cloud_path, # For naming outputs
-                        outputDir=output_dir,
-                        save_cyl_ply=save_qsm_cyl_ply,
-                        save_sphere_ply=save_qsm_sphere_ply,
-                        save_csv=save_qsm_cyl_csv,
-                        verbose=qsm_verbose,
-                        device=device
-                    )
-                else:
-                    print(f"  ERROR: Unknown QSM type '{qsm_type}'. Skipping QSM for {base_filename}.")
+                fitQSM_DepthFirst(
+                    cloud_data=current_cloud_data,
+                    cloud_path=cloud_path, # For naming outputs
+                    outputDir=output_dir,
+                    cfg=cfg,
+                    device=device,
+                )
             else:
                  print("  Skipping QSM Fitting Step.")
 

@@ -47,18 +47,6 @@ class Sphere:
             raise ValueError("Invalid thickness type. Must be 'relative' or 'absolute'.")
 
     def assign_points(self, points, indices, device, point_tree):
-        # Ensure that points is a torch tensor on the desired device.
-        # (If using NumPy arrays, convert them first.)
-        # if not isinstance(points, torch.Tensor):
-        #     points = torch.tensor(points, device=device, dtype=torch.float32)
-        
-        # # Optionally, if self.center is stored as a NumPy array, convert it too.
-        # if not isinstance(self.center, torch.Tensor):
-        #     self.center = torch.tensor(self.center, device=device, dtype=torch.float32)
-        
-        # # Assume indices is a tensor or a NumPy array of indices.
-        # if not isinstance(indices, torch.Tensor):
-        #     indices = torch.tensor(indices, device=device, dtype=torch.long)
 
         # Get points within the sphere
         local_indices = np.array(point_tree.query_ball_point( self.center, self.radius + 0.05 ))
@@ -165,11 +153,6 @@ class Sphere:
             return []
         
         candidate_info = []  # List to store (centroid, spread) tuples.
-
-        # These might need tuning and could be added to your main `params` dictionary
-        # ransac_threshold = 0.05 # Max distance point to cylinder (e.g., 2cm)
-        # ransac_iterations = 100 # Number of RANSAC iterations
-        # ransac_min_points = 5 # Min points needed for pyransac3d fit
         
         for label in valid_labels:
 
@@ -272,67 +255,6 @@ class Sphere:
 
             # radius_final is the estimated spread
             candidate_info.append((center_3d_final, radius_final)) # Store 3D center and 2D radius (spread)
-            # # Get all points in the current cluster.
-            # cluster_coords = candidate_coords[labels == label]
-            
-            # # Compute the centroid of the cluster in 3D.
-            # centroid_3d = np.mean(cluster_coords, axis=0)
-
-            # # Compute the vector from the sphere center (self.center) to the centroid
-            # v = centroid_3d - self.center
-            # n = v / np.linalg.norm(v)  # Normal of the plane
-
-            # # Choose an arbitrary vector that is not parallel to n.
-            # arbitrary = np.array([0, 0, 1])
-            # if np.abs(np.dot(n, arbitrary)) > 0.99:
-            #     arbitrary = np.array([0, 1, 0])
-                
-            # # Create two orthonormal basis vectors for the plane:
-            # basis1 = arbitrary - np.dot(arbitrary, n) * n
-            # basis1 = basis1 / np.linalg.norm(basis1)
-            # basis2 = np.cross(n, basis1)
-
-            # # Compute offsets of all points from the cluster centroid
-            # offsets = cluster_coords - centroid_3d  # Shape (N, 3)
-
-            # # Compute the dot product of each offset with the plane normal (produces an (N,) array)
-            # proj_comp = offsets @ n  # Equivalent to np.dot(offsets, n)
-
-            # # Remove the component in the normal direction to get the projection vector for every point
-            # proj_vec = offsets - np.outer(proj_comp, n)  # Shape (N, 3)
-
-            # # Compute 2D coordinates by projecting onto basis1 and basis2
-            # x_coords = proj_vec @ basis1  # Shape (N,)
-            # y_coords = proj_vec @ basis2  # Shape (N,)
-
-            # # Stack the 1D coordinate arrays column-wise to form an (N, 2) array for 2D points
-            # projected = np.column_stack((x_coords, y_coords))
-            
-            # # # Fit a best-fit plane using PCA (SVD) on the cluster coordinates.
-            # # centered_coords = cluster_coords - centroid_3d
-            # # U, S, Vt = np.linalg.svd(centered_coords, full_matrices=False)
-            # # # The first two principal components span the best-fit plane.
-            # # plane_basis = Vt[:2].T  # shape (3,2)
-            
-            # # # Project the cluster points onto the plane.
-            # # projected = centered_coords.dot(plane_basis)  # shape (n_points, 2)
-
-            # # New: Fit circle in 2D
-            # center_2d, radius = fit_circle_2d(projected)
-
-            # # # Convert 2D circle center back to 3D
-            # # center_3d = centroid_3d + plane_basis @ center_2d
-
-            # # Convert the 2D circle center back to 3D
-            # center_3d = centroid_3d + center_2d[0]*basis1 + center_2d[1]*basis2
-
-            # # Filter out candidate centers that are too far from this sphere's center.
-            # distance = np.linalg.norm(center_3d - self.center)
-            # if distance > self.radius*1.2:
-            #     continue
-
-            # # Append center and radius (spread)
-            # candidate_info.append((center_3d, radius))
 
         # Sometimes the seed sphere hits the start of a branch, thus needing to be an outer sphere
         if self.is_seed and len(candidate_info)==1:
@@ -506,13 +428,6 @@ class CylinderTracker:
         parent_cylinder_id = sphere_a.first_cylinder_id  # might be None if sphere_a hasn't been reached before
         if sphere_b.first_cylinder_id is None:
             sphere_b.first_cylinder_id = cylinder_id
-
-        # if logger is not None:
-        #     logger.info(f"      Creating Cylinder:")
-        #     logger.info(f"        From Sphere @ {sphere_a.center} (Radius {sphere_a.radius:.4f}, Spread {sphere_a.spread:.4f})")
-        #     logger.info(f"        To   Sphere @ {sphere_b.center} (Radius {sphere_b.radius:.4f}, Spread {sphere_b.spread:.4f})")
-        #     logger.info(f"        Assigned Cylinder Radius: {radius:.4f}") # THIS IS THE KEY VALUE PASSED IN
-        #     logger.info(f"        Type: {cyl_type}")
     
         cylinder = Cylinder(
             id=cylinder_id,
@@ -858,15 +773,6 @@ def find_seed_sphere(points, potential_seed_indices, sphere_radius, sphere_thick
 
     seed_idx = random.choice(potential_seed_indices)
     seed_point = points[seed_idx]
-    
-    # temp_sphere = Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True)
-    # temp_sphere.assign_points(points, unsegmented_points, device=device, point_tree=point_tree)
-    # spread = compute_spread_of_points(points[temp_sphere.contained_points])
-
-    # # if logger is not None:
-    # #     logger.info(f"*** New Seed Shere created ***\n@ {seed_point}\nradius: {sphere_radius}\nspread: {spread}")
-
-    # return Sphere(seed_point, radius=sphere_radius, thickness=sphere_thickness, is_seed=True, spread=spread, thickness_type=sphere_thickness_type)
 
     if logger is not None:
         logger.info(f"*** Potential Seed Sphere selected ***\n@ {seed_point}\nInitial Radius: {sphere_radius}")
@@ -889,11 +795,6 @@ def find_neighborhood_points(points, unsegmented_mask, sphere, search_radius, po
     """
     if unsegmented_mask.sum() == 0: # Check if any points are unsegmented
         return np.array([], dtype=int) # Optional: Early exit if mask is all False
-
-    # coords = points[unsegmented_points]
-    # tree = cKDTree(coords)
-    # indices = tree.query_ball_point(sphere.center, r=sphere.radius + search_radius)
-    # return unsegmented_points[indices]
 
     # Define the total radius for the KDTree query
     query_radius = sphere.radius + search_radius
@@ -1255,11 +1156,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
     # Perform initial segmentation update based on type (mirrors original logic)
     if params['segmentation_type'] == 'sphere':
         unsegmented_mask &= (segmentation_ids == -1) # Update mask directly
-    # No cylinder segmentation needed yet for the initial sphere itself.
-
-    # Add the initial sphere to the priority queue
-    # initial_priority = -initial_sphere.spread if initial_sphere.spread is not None else 0.0
-    # heapq.heappush(pq, (initial_priority, next(unique_id_counter), initial_sphere))
 
     # --- Calculate and Push Initial Sphere ---
     initial_spread = initial_sphere.spread if initial_sphere.spread is not None else 0.0
@@ -1285,7 +1181,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
         # If we added it as an attribute: parent_priority_score = current_sphere.priority_score
         # Alternatively, just use the popped value:
         parent_priority_score = -priority # This is the score used to rank the parent
-        # print(f"{len(unsegmented_points)}/{len(points)}, {priority:.3f}, {_}, sphere center: {current_sphere.center}, sphere radius {current_sphere.radius}")
 
         if logger is not None:
             logger.info(f"  ----------------------------------")
@@ -1297,17 +1192,9 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
             logger.info(f"    Parent Score (used for its rank): {parent_priority_score:.4f}")
             logger.info(f"    Heap Priority: {priority:.4f}")
 
-        # --- Candidate Generation (Uses current unsegmented points state) ---
+        # --- Candidate Generation ---
         # Determine the points available for candidate search based on segmentation type
         available_points_mask = unsegmented_mask.copy()
-
-        # Assign points *just for candidate finding* - This is implicit in original,
-        # but good practice here to ensure candidates are found based on current points.
-        # We don't check the threshold here, just find neighbors.
-        # Need to be careful not to overwrite the sphere's main contained_points yet.
-        # Let's assume get_candidate_centers_and_spreads uses the passed 'unsegmented_points'
-        # implicitly via assign_points called within it, or pass it explicitly if needed.
-        # For now, assume it works like the original.
 
         candidate_info = current_sphere.get_candidate_centers_and_spreads(points,
                                                                   eps=params['eps'],
@@ -1363,7 +1250,7 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
             label_indices = np.where(labels == label)[0]
             next_sphere = None # Initialize potential sphere for this label
 
-            # --- Create single or merged sphere (Identical logic to original) ---
+            # --- Create single or merged sphere ---
             if len(label_indices) == 1:
                 center, spread = candidate_info[label_indices[0]]
                 capped_spread = np.clip(spread, lower_bound, upper_bound)
@@ -1371,7 +1258,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                 new_radius = min(new_radius, params['radius_max'])
                 next_sphere = Sphere(center, radius=new_radius, thickness=params["sphere_thickness"], spread=capped_spread, thickness_type=params["sphere_thickness_type"])
             else: # Merging
-                # ... (Full merging logic exactly as in the original code) ...
                 # Important: assign_points for temp spheres uses points_available_for_new_spheres
                 grouped_centers = candidate_centers[label_indices]; grouped_spreads = candidate_spreads[label_indices]
                 temp_spheres = []; weights = []
@@ -1451,10 +1337,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
                     cluster.add_sphere(next_sphere)
                     cylinder_tracker.add_cylinder(current_sphere, next_sphere, next_sphere.spread, logger=logger)
 
-                    # Add to priority queue for future processing
-                    # new_priority = -next_sphere.spread
-                    # heapq.heappush(pq, (new_priority, next(unique_id_counter), next_sphere))
-
                     # --- Calculate Moving Average Priority and Push Child Sphere ---
                     child_spread = next_sphere.spread if next_sphere.spread is not None else 0.0
 
@@ -1463,9 +1345,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
 
                     # Calculate moving average score (positive value)
                     child_priority_score = alpha * child_spread + (1.0 - alpha) * parent_priority_score
-
-                    # Store the positive score on the sphere object if needed for debugging or future use
-                    # next_sphere.priority_score = child_priority_score # Optional attribute
 
                     # Convert back to negative heap priority for min-heap
                     child_heap_priority = -child_priority_score
@@ -1546,7 +1425,6 @@ def cluster_points_priority(points, sphere_id_start: int, initial_sphere: Sphere
         if progress_bar is not None:
             progress_bar.n = progress_bar.total - np.sum(unsegmented_mask)
             progress_bar.refresh()
-        # --- ID Increment Point (Mirrors original) ---
         # Increment the ID after fully processing current_sphere and its children,
         # and after the segmentation update for that step.
         current_sphere_id += 1
@@ -1661,7 +1539,6 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
     if not main_cluster.spheres:
         return next_sphere_id, segmentation_ids, unsegmented_mask
 
-    # --- Branch Finding and Merging Loop (largely unchanged logic) ---
     search_radius = params['smallest_search_radius']
     while search_radius <= params['max_search_radius']:
         # Get current outer spheres of the main cluster *as it grows*
@@ -1685,13 +1562,11 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
             neighborhood_indices = find_neighborhood_points(points, unsegmented_mask, outer_sphere, search_radius=search_radius, point_tree=point_tree)
 
             # Find and grow new clusters from the neighborhood
-            # while neighborhood_points.size >= params.get('min_growth_points', 5): # Ensure enough points for a seed
             while len(neighborhood_indices) >= params.get('min_growth_points', 5):
                 seed_sphere = find_seed_sphere(points, neighborhood_indices, params['sphere_radius'], params['sphere_thickness'], device=params['device'], point_tree=point_tree, sphere_thickness_type=params["sphere_thickness_type"], logger=logger) # Pass thickness_type
 
                 # Grow the new cluster using the priority method
                 # Start its IDs from the current 'next_sphere_id'
-                # ---> ADDED: Assign points and calculate spread for the new seed sphere <---
                 # Assign points using the *current global* unsegmented_mask
                 seed_sphere.assign_points(points, unsegmented_mask, params['device'], point_tree)
 
@@ -1706,8 +1581,6 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
                               progress_bar.refresh()
 
                      # Remove the failed seed point's index and contained points' indices from the current neighborhood list
-                    #  failed_seed_and_contained = np.union1d(np.array([points.tolist().index(seed_sphere.center.tolist())] if seed_sphere.center.tolist() in points.tolist() else []), # Get index of seed center robustly
-                    #                                          seed_sphere.contained_points)
                      neighborhood_indices = np.setdiff1d(neighborhood_indices, seed_sphere.contained_points.astype(int), assume_unique=True)
                      continue # Try next seed in the reduced neighborhood
 
@@ -1716,8 +1589,6 @@ def grow_cluster(points, sphere_id_start, initial_sphere, segmentation_ids, unse
                      seed_sphere.spread = compute_spread_of_points(points[seed_sphere.contained_points])
                 else:
                      seed_sphere.spread = 0.01 # Fallback spread
-
-                # ---> END ADDED SECTION <---
 
                 # Grow the new cluster using the priority method, passing the mask
                 new_cluster, next_sphere_id_after_branch, segmentation_ids, unsegmented_mask = cluster_points_priority(
@@ -1841,7 +1712,6 @@ def final_merge_clusters(clusters, points, cylinder_tracker: CylinderTracker, se
 
                 # Update segmentation and merge candidate cluster's spheres into main_cluster.
                 for sphere in candidate_cluster.spheres:
-                    # segmentation_ids[sphere.contained_points] = main_id
                     segmentation_ids[sphere.contained_points] = 0
                     if sphere.is_seed:
                         sphere.is_seed = False
@@ -1881,16 +1751,6 @@ def _traverse_and_correct(parent_cyl, cylinder_tracker, min_growth, max_growth, 
         if (not only_correct_connection) or (child.cyl_type == "connection"):
             new_radius = np.clip(child.radius, allowed_lower, allowed_upper)
             if child.radius != new_radius:
-                # if logger is not None:
-                #     logger.info(f"\n      Correcting Radius:")
-                #     logger.info(f"        Cylinder ID: {child.id} (Child of {parent_cyl.id})")
-                #     logger.info(f"        Cylinder Type: {child.cyl_type}")
-                #     logger.info(f"        Parent Radius: {parent_cyl.radius:.4f}")
-                #     logger.info(f"        Original Child Radius: {original_radius:.4f}")
-                #     logger.info(f"        Allowed Range: [{allowed_lower:.4f}, {allowed_upper:.4f}]")
-                #     logger.info(f"        Corrected Child Radius: {new_radius:.4f}")
-                # Uncomment or add logging as needed:
-                # print(f"Correcting cylinder ID {child.id}: radius {child.radius:.3f} -> {new_radius:.3f}")
                 child.radius = new_radius
                 child.volume = np.pi * (child.radius ** 2) * child.length
         # Recursively process all children regardless of whether the correction was applied.
@@ -1914,13 +1774,23 @@ def fitQSM_DepthFirst(
     cloud_data: np.ndarray, # Takes numpy array
     cloud_path: str, # Original path for naming
     outputDir: str,
-    save_cyl_ply: bool = False,
-    save_sphere_ply: bool = False,
-    save_csv: bool = True,
-    verbose: bool = False,
-    debug: bool = False,
+    cfg,
     device: torch.device = 'cpu'
 ):
+
+    verbose = cfg["stage3"]["qsm_verbose"]
+    debug = cfg["stage3"]["qsm_debug"]
+    save_csv = cfg["general"]["save_qsm_cyl_csv"]
+    save_cyl_ply = cfg["general"]["save_qsm_cyl_ply"]
+    save_sphere_ply = cfg["general"]["save_qsm_sphere_ply"]
+
+    # Extract and convert QSM parameters
+    raw_params = cfg["stage3"]["qsm_params"]
+    params = {
+        **raw_params,
+        "eps": np.radians(raw_params["eps_deg"]),
+        "device": device,  # Inject runtime parameter
+    }
 
     if cloud_data is None or len(cloud_data) < 10: # Check for valid input data
          print(f"  Skipping DepthFirst QSM for {os.path.basename(cloud_path)}: Insufficient data points ({len(cloud_data) if cloud_data is not None else 0}).")
@@ -1953,40 +1823,8 @@ def fitQSM_DepthFirst(
     unsegmented_mask = np.ones(num_points, dtype=bool)
 
     clusters = []
-    current_cluster_id = 0 # Use this to assign IDs to *clusters* (or the initial growth phase)
+    current_cluster_id = 0
     cylinder_tracker = CylinderTracker()
-
-    params = {
-        'eps': np.radians(20), # 0.05
-        'min_samples': 5,
-        'sphere_factor': 2.0,
-        'radius_min': 0.15,
-        'radius_max': 0.4,
-        'min_growth_points': 10,
-        'min_points_threshold': 4,
-        'max_spread_growth': 1.05,
-        'min_spread_growth': 0.33,
-        'smallest_search_radius': 0.1,
-        'search_radius_step': 0.1,
-        'max_search_radius': 0.3,
-        'max_dist': 0.4,
-        'max_angle': 30,
-        'distance_type': 'center',
-        'sphere_radius': 0.15,
-        'sphere_thickness': 0.1,
-        'sphere_thickness_type': 'absolute',
-        'clustering_algorithm': 'agglomerative',
-        'merging_procedure': 'none',
-        'clustering_linkage': 'single',
-        'clustering_type': 'angular', # Or euclidian
-        'eps_cylinder': 0.1,
-        'segmentation_type': 'cylinder',
-        'only_correct_connections': True,
-        'priority_alpha': 0.5,
-        'ransac_iterations': 10, 
-        'ransac_subset_percentage': 0.8,
-        'device': device,
-    }
 
     if debug:
         logger.info("\nInitialized with parameters:")
@@ -2199,5 +2037,5 @@ def fitQSM_DepthFirst(
     stats = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
     stats.print_stats(50)  # Or however many lines you want
 
-    logger.info("Profiler output:\n" + s.getvalue())
+    if debug: logger.info("Profiler output:\n" + s.getvalue())
 

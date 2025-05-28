@@ -14,14 +14,11 @@ from Modules.Evaluation.ModelLoaders import load_model
 from Modules.Utils import load_cloud, save_cloud
 
 def makePredictionsSingle(
+    cfg,
     cloud_path: str, # Process one cloud path
     outputDir: str,
     model_offset: torch.nn.Module = None, # Pass loaded model object
     model_noise: torch.nn.Module = None, # Pass loaded model object
-    predict_offset: bool = True, # Corresponds to 'cloud_sharpening' conceptually
-    denoise: bool = True,
-    save_output: bool = False, # New flag to control saving
-    cloud_save_type: str = "npy" # Format if saving
 ) -> np.ndarray:
     """
     Loads a cloud, applies optional offset prediction and denoising,
@@ -29,6 +26,11 @@ def makePredictionsSingle(
     Uses Dataset/Dataloader only if prediction/denoising is needed.
     """
     base_file_name = os.path.splitext(os.path.basename(cloud_path))
+
+    predict_offset = cfg["stage1"]["predict_offset"]
+    denoise = cfg["stage1"]["denoise"]
+    save_output = cfg["general"]["save_model_predictions"]
+    cloud_save_type = cfg["general"]["cloud_save_type"]
 
     if not predict_offset and not denoise:
         # If no model processing needed, just load and return
@@ -148,14 +150,6 @@ def rasterize_clouds(data_paths, json_path, raster_size, stride, store_metadata)
                                     "max": [x + raster_size, y + raster_size, z + raster_size]
                                 }
                             })
-                        else:
-                            # Point indices are stored in a new last column
-                            raster = np.hstack((raster, raster_indices))
-
-                            save_path = os.path.join(eval_dir, f'{plot_number}_{tree_number}_{raster_id}.npy')
-                            if os.path.exists(save_path) and not overwrite:
-                                continue
-                            np.save( save_path, raster )
 
                         raster_id += 1
                         num_rasters += 1
@@ -170,14 +164,11 @@ def rasterize_clouds(data_paths, json_path, raster_size, stride, store_metadata)
 
 
 def makePredictionsRasterized(
+    cfg,
     cloud_path: str, # Process one cloud path
     outputDir: str,
     model_offset: torch.nn.Module = None, # Pass loaded model object
     model_noise: torch.nn.Module = None, # Pass loaded model object
-    predict_offset: bool = True, # Corresponds to 'cloud_sharpening' conceptually
-    denoise: bool = True,
-    save_output: bool = False, # New flag to control saving
-    cloud_save_type: str = "npy" # Format if saving
 ) -> np.ndarray:
     """
     Loads a cloud, applies optional offset prediction and denoising,
@@ -185,6 +176,11 @@ def makePredictionsRasterized(
     Uses Dataset/Dataloader only if prediction/denoising is needed.
     """
     base_file_name = os.path.splitext(os.path.basename(cloud_path))
+
+    predict_offset = cfg["stage1"]["predict_offset"]
+    denoise = cfg["stage1"]["denoise"]
+    save_output = cfg["general"]["save_model_predictions"]
+    cloud_save_type = cfg["general"]["cloud_save_type"]
 
     if not predict_offset and not denoise:
         # If no model processing needed, just load and return

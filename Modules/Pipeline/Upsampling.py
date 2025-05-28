@@ -19,119 +19,25 @@ def parse_args():
 
     return parser.parse_args()
 
-
-
-# def superSample(cloudList, outputDir, k=10, iterations=5, min_height=20, use_only_original=True):
-#     if not os.path.exists(outputDir):
-#         os.makedirs(outputDir)
-
-#     for cloud in cloudList:
-#         # 1) Try plain text:
-#         try:
-#             data = np.loadtxt(cloud)
-#             data = data[:, :3]
-#         except Exception:
-#             pass
-
-#         # 2) Try laspy
-#         try:
-#             las = laspy.read(cloud)
-#             data = np.vstack((las.x, las.y, las.z)).T
-#         except (ImportError, laspy.errors.LaspyException):
-#             pass
-        
-#         # Determine true minimum height
-#         min_z = np.min(data[:, 2])  # Lowest z-coordinate in the cloud
-#         height_threshold = min_z + min_height
-
-#         # Separate points for upsampling
-#         mask = data[:, 2] >= height_threshold
-#         points_above_threshold = data[mask]
-
-#         if len(points_above_threshold) == 0:
-#             print(f"Skipping {cloud}, no points above minimum height threshold.")
-#             np.savetxt(os.path.join(outputDir, os.path.basename(cloud)), data)
-#             continue
-
-#         new_points_all = []  # Will store all new points generated
-        
-#         if use_only_original:
-#             # Only original points (above threshold) are used as centers.
-#             original_points = points_above_threshold.copy()
-#             # For neighbor queries, we use the union of original points and new points.
-#             points_for_query = original_points.copy()
-#             for i in range(iterations):
-#                 new_points = []
-#                 # Process original points in random order.
-#                 order = np.random.permutation(len(original_points))
-#                 tree = cKDTree(points_for_query)
-#                 for idx in order:
-#                     point = original_points[idx]
-#                     distances, neighbor_indices = tree.query(point, k=k*2**(i))
-#                     if len(neighbor_indices) > 1:
-#                         # Exclude the self-match (first neighbor) and choose one neighbor randomly.
-#                         chosen_idx = np.random.choice(neighbor_indices[1:])
-#                         neighbor = points_for_query[chosen_idx]
-#                         midpoint = (point + neighbor) / 2.0
-#                         new_points.append(midpoint)
-#                 if new_points:
-#                     new_points = np.array(new_points)
-#                     # Append the new points to the query set.
-#                     points_for_query = np.vstack([points_for_query, new_points])
-#                     new_points_all += new_points.tolist()
-#         else:
-#             # Standard method: update the set of points for querying in each iteration.
-#             points_to_sample = points_above_threshold.copy()
-#             for _ in range(iterations):
-#                 new_points = []
-#                 # Process points in random order.
-#                 order = np.random.permutation(len(points_to_sample))
-#                 tree = cKDTree(points_to_sample)
-#                 for idx in order:
-#                     point = points_to_sample[idx]
-#                     distances, neighbor_indices = tree.query(point, k=k)
-#                     if len(neighbor_indices) > 1:
-#                         chosen_idx = np.random.choice(neighbor_indices[1:])
-#                         neighbor = points_to_sample[chosen_idx]
-#                         midpoint = (point + neighbor) / 2.0
-#                         new_points.append(midpoint)
-#                 if new_points:
-#                     new_points = np.array(new_points)
-#                     # Append new points to the query set for the next iteration.
-#                     points_to_sample = np.vstack([points_to_sample, new_points])
-#                     new_points_all += new_points.tolist()
-        
-#         # Combine the full original data with the new points.
-#         if new_points_all:
-#             new_points_all = np.array(new_points_all)
-#             upsampled_data = np.vstack([data, new_points_all])
-#         else:
-#             upsampled_data = data
-
-#         # Save output
-#         filename = os.path.splitext(os.path.basename(cloud))[0]
-
-#         output_path = os.path.join(outputDir, f"{filename}_supsamp.txt")
-#         np.savetxt(output_path, upsampled_data, fmt="%.6f")
-
-#     return
-
-def superSample(
+def upsample(
     cloud_data: np.ndarray, # Takes numpy array directly
     cloud_path: str, # Original path for naming
     outputDir: str,
-    k: int = 10,
-    iterations: int = 5,
-    min_height: float = 0.0, # Changed from 20 based on your example usage
-    use_only_original: bool = True,
-    save_output: bool = False, # Flag to control saving
-    cloud_save_type: str = "npy",
-    max_points_for_full_supersample: int = 1000000 # New parameter
+    cfg
 ) -> np.ndarray:
     """
     Performs super sampling on the input point cloud data, optionally saves,
     and returns the result.
     """
+
+    k = cfg["stage2"]["k_init"]
+    iterations = cfg["stage2"]["max_iterations"]
+    min_height = cfg["stage2"]["min_height"]
+    use_only_original = cfg["stage2"]["use_only_original_points"]
+    min_points_for_full_supersample = cfg["stage2"]["min_points"]
+    save_output = cfg["general"]["save_upsampling"]
+    cloud_save_type = cfg["general"]["cloud_save_type"]
+
     if cloud_data is None or len(cloud_data) == 0:
         print(f"  Skipping super sampling for {os.path.basename(cloud_path)}: No input data.")
         return cloud_data # Return None or empty array as received
@@ -167,7 +73,7 @@ def superSample(
 
     _number_of_points_after_iteration = original_num_points
     needed_iterations = 0
-    while _number_of_points_after_iteration < max_points_for_full_supersample:
+    while _number_of_points_after_iteration < min_points_for_full_supersample:
         if use_only_original:
             _number_of_points_after_iteration += original_num_points
         else:
@@ -175,7 +81,7 @@ def superSample(
         needed_iterations += 1
 
     if needed_iterations == 0:
-        print(f"Cloud Length of {len(data)} already over {max_points_for_full_supersample}, Skipping Upsampling")
+        print(f"Cloud Length of {len(data)} already over {min_points_for_full_supersample}, Skipping Upsampling")
         return data
 
     # (The rest of your super sampling logic remains the same, using points_above_threshold, etc.)
@@ -274,4 +180,4 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    superSample(cloudList, outputDir, min_height=0, use_only_original=True, k=10, iterations=5)
+    upsample(cloudList, outputDir, min_height=0, use_only_original=True, k=10, iterations=5)

@@ -1,0 +1,57 @@
+general:
+  input_dir: data/pipeline/input/
+  output_dir: data/pipeline/output/
+  save_model_predictions: false # Saves the processed clouds from stage 1
+  save_upsampling: false # Saves the upsampled clouds from stage 2
+  save_qsm_cyl_ply: false # Saves a ply file for visually inspecting the QSMs
+  save_qsm_sphere_ply: false # Saves a ply file of spheres iftted in the qsm
+  save_qsm_cyl_csv: true # Saves the cylinders as csv
+  cloud_save_type: npy # The type of file 
+
+stage1:
+  predict_offset: true
+  denoise: true
+  model_type: "treelearn"
+
+stage2:
+  upsampling: true # Toggle stage 2
+  k_init: 10 # Initial number of queried nearest neighbors
+  max_iterations: 10
+  min_height: 0.0 # Relative height in a tree from which to start upsampling
+  use_only_original_points: true
+  min_points: 1000000 # Minimum number of points after upsampling
+
+stage3:
+  qsm_fitting: true # Toggle qsm fitting on or off
+  qsm_verbose: false # Shows per tree fitting progress
+  qsm_debug: false # Creates log file of sphere and cylinder creation
+
+  qsm_params:
+    eps_deg: 20  # in degrees, convert to radians in code
+    min_samples: 5
+    sphere_factor: 2.0
+    radius_min: 0.15
+    radius_max: 0.4
+    min_growth_points: 10
+    min_points_threshold: 4
+    max_spread_growth: 1.05
+    min_spread_growth: 0.33
+    smallest_search_radius: 0.1
+    search_radius_step: 0.1
+    max_search_radius: 0.3
+    max_dist: 0.4
+    max_angle: 30
+    distance_type: center
+    sphere_radius: 0.15
+    sphere_thickness: 0.1
+    sphere_thickness_type: absolute
+    clustering_algorithm: agglomerative
+    merging_procedure: none
+    clustering_linkage: single
+    clustering_type: angular
+    eps_cylinder: 0.1
+    segmentation_type: cylinder
+    only_correct_connections: true
+    priority_alpha: 0.5
+    ransac_iterations: 10
+    ransac_subset_percentage: 0.8
