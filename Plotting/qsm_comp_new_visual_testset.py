@@ -100,6 +100,22 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
                         start = np.array([row['startY'], row['startZ']])
                         end = np.array([row['endY'], row['endZ']])
                 except:
+                    # Filter again with new column names (already done before the projection)
+                    start_in_bounds = (
+                        xmin <= row['start_x'] <= xmax and
+                        ymin <= row['start_y'] <= ymax and
+                        zmin <= row['start_z'] <= zmax
+                    )
+                    end_in_bounds = (
+                        xmin <= row['end_x'] <= xmax and
+                        ymin <= row['end_y'] <= ymax and
+                        zmin <= row['end_z'] <= zmax
+                    )
+                    # The 'if not (start_in_bounds or end_in_bounds): continue'
+                    # should ideally be outside and before this try-except for projection,
+                    # or duplicated if column names truly vary for coordinates too.
+                    # Assuming it's already handled or we re-check here for safety.
+
                     if view == 'z' and slice_index == 0:
                         center_x = (row['start_x'] + row['end_x']) / 2
                         center_y = (row['start_y'] + row['end_y']) / 2
@@ -111,24 +127,24 @@ def plot_qsm_comparison_slices(cloud, original_cylinders, enhanced_cylinders, bo
                         start = np.array([row['start_x'], row['start_y']])
                         end = np.array([row['end_x'], row['end_y']])
                     elif view == 'y':
-                        # cx = (xmin + xmax) / 2
-                        # cy = (ymin + ymax) / 2
-                        # theta = np.radians(45)
-                        # rot = np.array([
-                        #     [np.cos(theta), -np.sin(theta)],
-                        #     [np.sin(theta),  np.cos(theta)]
-                        # ])
-                        # start_xy = np.array([row['start_x'], row['start_y']]) - [cx, cy]
-                        # end_xy = np.array([row['end_x'], row['end_y']]) - [cx, cy]
+                        # <<< START OF FIX >>>
+                        cx_slice = (xmin + xmax) / 2 # Use a different var name if cx, cy are global
+                        cy_slice = (ymin + ymax) / 2 # Use a different var name if cx, cy are global
+                        theta = np.radians(45)
+                        rot = np.array([
+                            [np.cos(theta), -np.sin(theta)],
+                            [np.sin(theta),  np.cos(theta)]
+                        ])
+                        # Use the correct column names for this except block
+                        start_xy_orig = np.array([row['start_x'], row['start_y']]) - [cx_slice, cy_slice]
+                        end_xy_orig = np.array([row['end_x'], row['end_y']]) - [cx_slice, cy_slice]
 
-                        # start_rotated = start_xy @ rot.T
-                        # end_rotated = end_xy @ rot.T
+                        start_rotated = start_xy_orig @ rot.T
+                        end_rotated = end_xy_orig @ rot.T
 
-                        # start = np.array([start_rotated[0], row['start_z']])
-                        # end = np.array([end_rotated[0], row['end_z']])
-
-                        start = np.array([row['start_x'], row['start_z']])
-                        end = np.array([row['end_x'], row['end_z']])
+                        start = np.array([start_rotated[0], row['start_z']])
+                        end = np.array([end_rotated[0], row['end_z']])
+                        # <<< END OF FIX >>>
                     else:  # 'x'
                         start = np.array([row['start_y'], row['start_z']])
                         end = np.array([row['end_y'], row['end_z']])

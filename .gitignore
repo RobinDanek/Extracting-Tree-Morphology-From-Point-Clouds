@@ -7,7 +7,13 @@ data/labeled/cloud/*
 TreeLearn/
 !Modules/TreeLearn
 ModelSaves/
+!ModelSaves/TreeLearn/TreeLearn_V0.02_U3_N0.1_O_FNH_CV/
+!ModelSaves/TreeLearn/TreeLearn_V0.02_U3_N0.05_N_FNH_CV/
+setup/
+setup_experimental/
 *.txt
+plots/
+
 
 # Ignore setup_gwdg
 setup/setup_gwdg.sh
@@ -18,7 +24,7 @@ jobs/
 *.err
 
 # Ignore notebook for testing
-test.ipynb
+**/*.ipynb
 
 # Compiled Object files
 *.slo
